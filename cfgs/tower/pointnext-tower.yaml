@@ -35,6 +35,6 @@ scheduler:
 
 trainer:
   max_epoch: 60
-  save_path: runs/pointnext_tower
+  save_path: data/pointnext_tower
   val_freq: 1
   log_freq: 10
