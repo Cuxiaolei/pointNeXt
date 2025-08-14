@@ -1,6 +1,6 @@
 common:
   dataset: tower
-  data_root: data/tower
+  data_root: /root/data/point/data
   num_points: 8000
   num_classes: 3
   feat_dim: 9
