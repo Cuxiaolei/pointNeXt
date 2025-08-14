@@ -2,6 +2,7 @@ dataset:
   common:
     NAME: tower
     data_root: /root/data/point/data/tower
+
     split: train
     num_points: 8000
     feat_keys: [xyz, normal, rgb]
@@ -16,7 +17,7 @@ dataset:
     augment: False
 
 model:
-  NAME: pointnext
+  NAME: pointnext-s
   in_channels: 9
   num_classes: 3
   encoder_args:
