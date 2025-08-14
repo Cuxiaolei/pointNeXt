@@ -1,0 +1,32 @@
+common:
+  dataset: tower
+  data_root: data/tower
+  num_points: 8000
+  num_classes: 3
+  feat_dim: 9
+  aug: True
+
+model:
+  type: PointNeXt
+  model_cfg:
+    in_channels: 9
+    num_classes: 3
+    width: 64
+    depth: 2
+    k: 16
+
+optimizer:
+  type: AdamW
+  lr: 0.001
+  weight_decay: 0.0001
+
+scheduler:
+  type: OneCycleLR
+  max_lr: 0.001
+  pct_start: 0.1
+
+trainer:
+  max_epoch: 60
+  batch_size: 2
+  num_workers: 4
+  save_path: runs/pointnext_tower
