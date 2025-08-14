@@ -307,7 +307,7 @@ class ResBlock(nn.Module):
         return [p, f]
 
 
-@MODELS.register_module(name='pointnext')
+@MODELS.register_module()
 class PointNextEncoder(nn.Module):
     r"""The Encoder for PointNext 
     `"PointNeXt: Revisiting PointNet++ with Improved Training and Scaling Strategies".
