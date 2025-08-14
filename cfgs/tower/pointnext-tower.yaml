@@ -1,43 +1,43 @@
 dataset:
   common:
-    NAME: tower                      # 对应 openpoints/dataset/tower.py 中的类名 TowerDataset
+    NAME: tower
     data_root: /root/data/point/data/tower
-    split: train
+
+    feat_keys: [xyz, normal, rgb]
+    classes: 3
     num_points: 8000
-    feat_keys: [xyz, normal, rgb]     # 输入特征组成
-    classes: 3                        # 三分类
   train:
+    split: train
     batch_size: 2
     shuffle: True
     augment: True
   val:
+    split: val
     batch_size: 2
     shuffle: False
     augment: False
 
 model:
-  NAME: pointnext                     # 确保与你注册的名字一致
+  NAME: pointnext
   in_channels: 9
   num_classes: 3
   encoder_args:
-    in_channels: 9
+    NAME: PointNextEncoder
+    blocks: [1, 3, 5, 3]
     width: 64
-    depth: 2
-    k: 16
-    radii: [[0.1], [0.2, 0.4, 0.4, 0.4],
-            [0.4, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
-            [0.8, 1.6, 1.6, 1.6]]
-    nsample: [[32], [32, 32, 32, 32],
-              [32, 32, 32, 32, 32, 32, 32],
-              [32, 32, 32, 32]]
+    radius: [[0.1], [0.2, 0.4, 0.4, 0.4], [0.4, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8], [0.8, 1.6, 1.6, 1.6]]
+    nsample: [[32], [32, 32, 32, 32], [32, 32, 32, 32, 32, 32, 32], [32, 32, 32, 32]]
+    sa_layers: 3
+    sa_use_res: True
+    expansion: 4
     group_args:
       NAME: ballquery
+      normalize_dp: True
   decoder_args:
-    mlp:
-      - [128, 128]
-      - [128, 128]
-      - [128, 128]
-      - [128, 128]
+    NAME: PointNextDecoder
+    fp_channels: [64, 64, 64]
+  cls_args:
+    NAME: SegHead
 
 optimizer:
   NAME: AdamW
@@ -51,6 +51,6 @@ scheduler:
 
 trainer:
   max_epoch: 60
+  save_path: data/pointnext_tower
   val_freq: 1
   log_freq: 10
-  save_path: data/pointnext_tower
