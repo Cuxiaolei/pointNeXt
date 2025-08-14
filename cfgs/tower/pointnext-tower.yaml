@@ -1,12 +1,11 @@
 dataset:
   common:
-    NAME: tower
+    NAME: tower                      # 对应 openpoints/dataset/tower.py 中的类名 TowerDataset
     data_root: /root/data/point/data/tower
-
     split: train
     num_points: 8000
-    feat_keys: [xyz, normal, rgb]
-    classes: 3
+    feat_keys: [xyz, normal, rgb]     # 输入特征组成
+    classes: 3                        # 三分类
   train:
     batch_size: 2
     shuffle: True
@@ -17,7 +16,7 @@ dataset:
     augment: False
 
 model:
-  NAME: pointnext
+  NAME: pointnext                     # 确保与你注册的名字一致
   in_channels: 9
   num_classes: 3
   encoder_args:
@@ -25,8 +24,12 @@ model:
     width: 64
     depth: 2
     k: 16
-    radii: [[0.1], [0.2, 0.4, 0.4, 0.4], [0.4, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8], [0.8, 1.6, 1.6, 1.6]]
-    nsample: [[32], [32, 32, 32, 32], [32, 32, 32, 32, 32, 32, 32], [32, 32, 32, 32]]
+    radii: [[0.1], [0.2, 0.4, 0.4, 0.4],
+            [0.4, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+            [0.8, 1.6, 1.6, 1.6]]
+    nsample: [[32], [32, 32, 32, 32],
+              [32, 32, 32, 32, 32, 32, 32],
+              [32, 32, 32, 32]]
     group_args:
       NAME: ballquery
   decoder_args:
