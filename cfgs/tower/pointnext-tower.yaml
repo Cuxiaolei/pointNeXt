@@ -1,32 +1,40 @@
-common:
-  dataset: tower
-  data_root: /root/data/point/data
-  num_points: 8000
-  num_classes: 3
-  feat_dim: 9
-  aug: True
+dataset:
+  common:
+    NAME: tower                         # 数据集名称，对应 TowerDataset 类
+    data_root: /root/data/point/data/tower                # 数据路径
+    split: train                         # 默认训练集
+    num_points: 8000                     # 每批采样点数
+    feat_keys: [xyz, normal, rgb]        # 特征组成
+    classes: 3                           # 类别数
+  train:
+    batch_size: 2
+    shuffle: True
+    augment: True
+  val:
+    batch_size: 2
+    shuffle: False
+    augment: False
 
 model:
-  type: PointNeXt
-  model_cfg:
-    in_channels: 9
-    num_classes: 3
-    width: 64
-    depth: 2
-    k: 16
+  NAME: pointnext                        # 模型名
+  in_channels: 9                         # xyz(3) + normal(3) + rgb(3)
+  num_classes: 3
+  width: 64
+  depth: 2
+  k: 16
 
 optimizer:
-  type: AdamW
+  NAME: AdamW
   lr: 0.001
   weight_decay: 0.0001
 
 scheduler:
-  type: OneCycleLR
+  NAME: OneCycleLR
   max_lr: 0.001
   pct_start: 0.1
 
 trainer:
   max_epoch: 60
-  batch_size: 2
-  num_workers: 4
   save_path: runs/pointnext_tower
+  val_freq: 1
+  log_freq: 10
