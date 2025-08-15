@@ -3,7 +3,7 @@ import numpy as np
 import laspy
 from tqdm import tqdm
 
-# ================== 参数配置 ==================
+# 标签映射
 label_mapping = {
     "铁塔": 0,
     "绝缘子": 0,
@@ -17,26 +17,22 @@ label_mapping = {
     "引流线": 2,
     "地线": 2
 }
-BETA = 1.25                # 背景 = BETA × (N0 + N2)
+class_names = {0: "前景(铁塔/绝缘子)", 1: "背景", 2: "前景(导线/地线)"}
+
+BETA = 1.25                # 背景 = BETA × (N0+N2)
 BG_MIN = 3_000_000         # 背景保底总点数
-MIN_POINTS_PER_FILE = 500  # 每文件至少保留点数
-# =============================================
+MIN_KEEP_POINTS = 2000     # 背景文件保护阈值（≤这个点数不采样）
 
 def ensure_feature_integrity(arr, label):
     """确保每个点有7个特征（3坐标+3颜色+1标签）"""
     if arr.shape[1] < 7:
-        print(f"[修复] 列数不足 {arr.shape[1]} → 7")
         coords = arr[:, :3] if arr.shape[1] >= 3 else np.zeros((len(arr), 3), dtype=np.float32)
-        if arr.shape[1] >= 6:
-            colors = arr[:, 3:6]
-        else:
-            colors = np.ones((len(arr), 3), dtype=np.uint8) * 128
+        colors = arr[:, 3:6] if arr.shape[1] >= 6 else np.ones((len(arr), 3), dtype=np.uint8) * 128
         labels = np.full((len(arr), 1), label, dtype=np.int32)
         arr = np.hstack([coords, colors, labels])
     elif arr.shape[1] > 7:
-        print(f"[修复] 列数过多 {arr.shape[1]} → 截取前7列")
         arr = arr[:, :7]
-    return arr
+    return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
 def count_points_per_file(las_input_dir):
     """统计每个文件各类别点数"""
@@ -85,7 +81,6 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
         bg_file_quota = None
 
     final_counts = {0: 0, 1: 0, 2: 0}
-    boosted_files = []
 
     for fname in tqdm(os.listdir(las_input_dir), desc="处理文件"):
         if not fname.endswith(".las"):
@@ -94,7 +89,7 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
         raw_label_name = fname.split("_")[-1].replace(".las", "")
         s3dis_label = label_mapping.get(raw_label_name, -1)
         if s3dis_label == -1:
-            print(f"警告：无法识别 {fname} 的标签，已跳过")
+            print(f"[跳过] 无法识别标签: {fname}")
             continue
 
         path = os.path.join(las_input_dir, fname)
@@ -115,42 +110,43 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
             colors,
             np.full((len(coords), 1), s3dis_label, dtype=np.int32)
         ])
+        orig_points = len(s3dis_data)
 
-        # 第一次特征检查（刚读完文件）
+        # 第一次特征检查
         s3dis_data = ensure_feature_integrity(s3dis_data, s3dis_label)
 
-        # 背景类采样
+        # 背景类采样（保护小文件）
         if balance and s3dis_label == 1:
             quota = bg_file_quota.get(fname, len(s3dis_data))
-            quota = max(quota, MIN_POINTS_PER_FILE)
-            if len(s3dis_data) > quota:
+            if len(s3dis_data) > quota and len(s3dis_data) > MIN_KEEP_POINTS:
                 idx = np.random.choice(len(s3dis_data), quota, replace=False)
                 s3dis_data = s3dis_data[idx]
+                print(f"[采样] {fname} | 类别 {s3dis_label}({class_names[s3dis_label]}) | 原始: {orig_points} → 采样后: {len(s3dis_data)}")
+            elif len(s3dis_data) <= MIN_KEEP_POINTS:
+                print(f"[跳过采样-小文件保护] {fname} | 类别 {s3dis_label}({class_names[s3dis_label]}) | 原始点数: {orig_points} (≤ {MIN_KEEP_POINTS})")
+            else:
+                print(f"[保留原样] {fname} | 类别 {s3dis_label}({class_names[s3dis_label]}) | 原始点数: {orig_points}")
+        else:
+            print(f"[保留原样] {fname} | 类别 {s3dis_label}({class_names[s3dis_label]}) | 原始点数: {orig_points}")
 
-        # 保底点数
-        if len(s3dis_data) < MIN_POINTS_PER_FILE:
-            repeat_factor = int(np.ceil(MIN_POINTS_PER_FILE / len(s3dis_data)))
-            s3dis_data = np.tile(s3dis_data, (repeat_factor, 1))[:MIN_POINTS_PER_FILE]
-            boosted_files.append(fname)
-
-        # 最终特征检查（保存前兜底）
+        # 最终特征检查
         s3dis_data = ensure_feature_integrity(s3dis_data, s3dis_label)
 
         final_counts[s3dis_label] += len(s3dis_data)
 
-        # 保存文件（Area_ 前缀）
         if not fname.startswith("Area_"):
             npy_name = f"Area_{fname.replace('.las', '.npy')}"
         else:
             npy_name = fname.replace(".las", ".npy")
-        np.save(os.path.join(raw_dir, npy_name), s3dis_data)
+        save_path = os.path.join(raw_dir, npy_name)
+        np.save(save_path, s3dis_data)
+        print(f"[保存] {save_path} ({len(s3dis_data)} 点)\n")
 
     print("\n==== 最终采样后的类别点数分布 ====")
     total_points = sum(final_counts.values())
     for cls_id, count in final_counts.items():
-        print(f"类别 {cls_id}: {count:,} 点 ({count / total_points:.2%})")
+        print(f"类别 {cls_id}({class_names[cls_id]}): {count:,} 点 ({count / total_points:.2%})")
     print(f"总点数: {total_points:,}")
-    print(f"保底补点文件数: {len(boosted_files)}，示例: {boosted_files[:5]}")
 
 if __name__ == "__main__":
     LAS_INPUT_DIR = r"D:\user\Documents\ai\paper\1_process\dataSet\s3dis_pointNeXt\input"

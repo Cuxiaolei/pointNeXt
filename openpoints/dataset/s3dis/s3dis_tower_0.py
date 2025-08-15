@@ -8,69 +8,36 @@ from torch.utils.data import Dataset
 from ..data_util import crop_pc, voxelize
 from ..build import DATASETS
 
-# ====== >>> ADDED: safety helpers for shape / NaN / subsample  ======
-def _ensure_2d(arr, name):
-    if arr.ndim == 1:
-        arr = arr.reshape(-1, 1)
-    if arr.ndim != 2:
-        raise ValueError(f"{name} must be 2D, got shape {arr.shape}")
-    return arr
-
-def _sanitize_numeric(coord, feat):
-    mask_c = np.isfinite(coord).all(axis=1)
-    mask_f = np.isfinite(feat).all(axis=1) if feat is not None else np.ones(len(coord), dtype=bool)
-    mask = mask_c & mask_f
-    if not mask.all():
-        coord = coord[mask]
-        feat  = feat[mask] if feat is not None else None
-    coord = np.nan_to_num(coord, nan=0.0, posinf=0.0, neginf=0.0)
-    if feat is not None:
-        feat = np.nan_to_num(feat, nan=0.0, posinf=0.0, neginf=0.0)
-    return coord, feat, mask
-
-def _limit_points(coord, feat, label, voxel_max, split, sample_name):
-    if voxel_max is None or voxel_max <= 0:
-        return coord, feat, label
-    n = coord.shape[0]
-    if n > voxel_max:
-        choice = np.random.choice(n, voxel_max, replace=False)
-        coord = coord[choice]
-        if feat is not None:
-            feat  = feat[choice]
-        if label is not None:
-            label = label[choice]
-        if split != 'train':
-            print(f"[{split}] limit points: {sample_name} {n} -> {voxel_max}")
-    return coord, feat, label
-
-def _ensure_shapes(coord, feat, label):
-    coord = _ensure_2d(coord, "coord")
-    if coord.shape[1] != 3:
-        raise ValueError(f"coord must have 3 columns, got {coord.shape[1]}")
-    if feat is not None:
-        feat = _ensure_2d(feat, "feat")
-        if feat.shape[1] < 3:
-            raise ValueError(f"feat must have at least 3 columns (rgb), got {feat.shape[1]}")
-    if label is not None:
-        label = _ensure_2d(label, "label")
-        if label.shape[1] != 1:
-            raise ValueError(f"label must have 1 column, got {label.shape[1]}")
-    return coord, feat, label
-# ====== <<< ADDED  ======
 
 @DATASETS.register_module()
 class S3DISTower(Dataset):
-    classes = ['Tower_Insulator', 'Background', 'Conductor']
+    # 1. 英文类别名称（对应你的三分类）
+    classes = ['Tower_Insulator', 'Background', 'Conductor']  # 铁塔_绝缘子、背景、导线类
+    # 2. 类别数量（保持3类）
     num_classes = 3
+    # 3. 每个类别的点数量（保持0，不影响训练）
     num_per_class = np.array([0, 0, 0], dtype=np.int32)
+    # 4. 英文类别对应颜色（保持原配色逻辑，方便可视化区分）
     class2color = {
-        'Tower_Insulator': [0, 255, 0],
-        'Background': [0, 0, 255],
-        'Conductor': [255, 255, 0]
+        'Tower_Insulator': [0, 255, 0],  # 绿色（铁塔和绝缘子）
+        'Background': [0, 0, 255],  # 蓝色（建筑物、地面等背景）
+        'Conductor': [255, 255, 0]  # 黄色（导线、引流线、地线）
     }
     cmap = [*class2color.values()]
     gravity_dim = 2
-
+    """S3DIS dataset, loading the subsampled entire room as input without block/sphere subsampling.
+    number of points per room in average, median, and std: (794855.5, 1005913.0147058824, 939501.4733064277)
+    Args:
+        data_root (str, optional): Defaults to 'data/S3DIS/s3disfull'.
+        test_area (int, optional): Defaults to 5.
+        voxel_size (float, optional): the voxel size for donwampling. Defaults to 0.04.
+        voxel_max (_type_, optional): subsample the max number of point per point cloud. Set None to use all points.  Defaults to None.
+        split (str, optional): Defaults to 'train'.
+        transform (_type_, optional): Defaults to None.
+        loop (int, optional): split loops for each epoch. Defaults to 1.
+        presample (bool, optional): wheter to downsample each point cloud before training. Set to False to downsample on-the-fly. Defaults to False.
+        variable (bool, optional): where to use the original number of points. The number of point per point cloud is variable. Defaults to False.
+    """
     def __init__(self,
                  data_root: str = '/root/autodl-tmp/raw',
                  test_area: int = 5,
@@ -83,6 +50,7 @@ class S3DISTower(Dataset):
                  variable: bool = False,
                  shuffle: bool = True,
                  ):
+
         super().__init__()
         self.split, self.voxel_size, self.transform, self.voxel_max, self.loop = \
             split, voxel_size, transform, voxel_max, loop
@@ -95,9 +63,11 @@ class S3DISTower(Dataset):
         data_list = sorted(os.listdir(raw_root))
         data_list = [item[:-4] for item in data_list if 'Area_' in item]
         if split == 'train':
-            self.data_list = [item for item in data_list if not 'Area_{}'.format(test_area) in item]
+            self.data_list = [
+                item for item in data_list if not 'Area_{}'.format(test_area) in item]
         else:
-            self.data_list = [item for item in data_list if 'Area_{}'.format(test_area) in item]
+            self.data_list = [
+                item for item in data_list if 'Area_{}'.format(test_area) in item]
 
         processed_root = os.path.join(data_root, 'processed')
         filename = os.path.join(
@@ -116,8 +86,8 @@ class S3DISTower(Dataset):
                     cdata = np.hstack((coord, feat, label))
                 self.data.append(cdata)
             npoints = np.array([len(data) for data in self.data])
-            logging.info('split: %s, median npoints %.1f, avg num points %.1f, std %.1f' %
-                         (self.split, np.median(npoints), np.average(npoints), np.std(npoints)))
+            logging.info('split: %s, median npoints %.1f, avg num points %.1f, std %.1f' % (
+                self.split, np.median(npoints), np.average(npoints), np.std(npoints)))
             os.makedirs(processed_root, exist_ok=True)
             with open(filename, 'wb') as f:
                 pickle.dump(self.data, f)
@@ -134,36 +104,40 @@ class S3DISTower(Dataset):
         data_idx = self.data_idx[idx % len(self.data_idx)]
         if self.presample:
             coord, feat, label = np.split(self.data[data_idx], [3, 6], axis=1)
+            # 将 XYZ 与 RGB 拼接作为特征
+            full_feat = np.hstack([coord, feat])
         else:
-            data_path = os.path.join(self.raw_root, self.data_list[data_idx] + '.npy')
+            data_path = os.path.join(
+                self.raw_root, self.data_list[data_idx] + '.npy')
             cdata = np.load(data_path).astype(np.float32)
             cdata[:, :3] -= np.min(cdata[:, :3], 0)
             coord, feat, label = cdata[:, :3], cdata[:, 3:6], cdata[:, 6:7]
             coord, feat, label = crop_pc(
                 coord, feat, label, self.split, self.voxel_size, self.voxel_max,
                 downsample=not self.presample, variable=self.variable, shuffle=self.shuffle)
+            # 将 XYZ 与 RGB 拼接作为特征
+            full_feat = np.hstack([coord, feat])
 
-        # ====== >>> ADDED: enforce shapes, sanitize, limit points ======
-        try:
-            coord, feat, label = _ensure_shapes(coord, feat, label)
-            coord, feat, mask = _sanitize_numeric(coord, feat)
-            if label is not None:
-                label = label[mask]
-            voxel_max = getattr(self, 'voxel_max', None)
-            sample_name = self.data_list[data_idx] if hasattr(self, 'data_list') else f"idx_{data_idx}"
-            coord, feat, label = _limit_points(coord, feat, label, voxel_max, self.split, sample_name)
-        except Exception as e:
-            raise RuntimeError(f"[{self.split}] data sample crashed at index {data_idx}: {e}")
-        # ====== <<< ADDED ======
-
-        full_feat = np.hstack([coord, feat])
         label = label.squeeze(-1).astype(np.long)
         data = {'pos': coord, 'x': full_feat, 'y': label}
+        # pre-process.
         if self.transform is not None:
             data = self.transform(data)
+
         if 'heights' not in data.keys():
-            data['heights'] = torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim+1].astype(np.float32))
+            data['heights'] =  torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim+1].astype(np.float32))
         return data
 
     def __len__(self):
         return len(self.data_idx) * self.loop
+        # return 1   # debug
+
+
+"""debug
+from openpoints.dataset import vis_multi_points
+import copy
+old_data = copy.deepcopy(data)
+if self.transform is not None:
+    data = self.transform(data)
+vis_multi_points([old_data['pos'][:, :3], data['pos'][:, :3].numpy()], colors=[old_data['x'][:, :3]/255.,data['x'][:, :3].numpy()])
+"""
