@@ -2,7 +2,7 @@
 dataset:
   common:
     NAME: S3DISTower
-    data_root: root/autodl-tmp/raw
+    data_root: root/autodl-tmp
     test_area: 5
     voxel_size: 0.04
   train:
