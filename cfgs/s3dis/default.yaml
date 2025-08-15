@@ -9,11 +9,12 @@ dataset:
     split: train
     voxel_max: 12000
     loop: 30  # here, the training has been looped 30 times. therefore, the training epochs do not need much.
-    presample: False
+    presample: True
   val:
     split: val
-    voxel_max: 12000
-    presample: True 
+    voxel_max: 12000      # 限制最大点数，防止卡死
+    presample: True       # 缓存采样结果，加快验证
+    batch_size: 4         # 每次验证 4 个样本，提升并行度
   test:
     split: test
     voxel_max: 12000
@@ -22,7 +23,7 @@ dataset:
 feature_keys: x
 num_classes: 3
 batch_size: 2
-val_batch_size: 1
+val_batch_size: 4
 
 dataloader:
   num_workers: 6
