@@ -96,15 +96,33 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
         with laspy.open(path) as f:
             las = f.read()
             coords = np.vstack([las.x, las.y, las.z]).T.astype(np.float32)
-            if hasattr(las, "red") and hasattr(las, "green") and hasattr(las, "blue"):
-                colors = np.vstack([
-                    las.red / 65535 * 255,
-                    las.green / 65535 * 255,
-                    las.blue / 65535 * 255
-                ]).T.astype(np.uint8)
-            else:
-                colors = np.ones((len(coords), 3), dtype=np.uint8) * 128
 
+            color_list = []
+            missing_channels = []
+
+            if hasattr(las, "red"):
+                color_list.append(las.red / 65535 * 255)
+            else:
+                color_list.append(np.ones(len(coords)) * 128)
+                missing_channels.append("red")
+
+            if hasattr(las, "green"):
+                color_list.append(las.green / 65535 * 255)
+            else:
+                color_list.append(np.ones(len(coords)) * 128)
+                missing_channels.append("green")
+
+            if hasattr(las, "blue"):
+                color_list.append(las.blue / 65535 * 255)
+            else:
+                color_list.append(np.ones(len(coords)) * 128)
+                missing_channels.append("blue")
+
+            colors = np.vstack(color_list).T.astype(np.uint8)
+
+            if missing_channels:
+                print(
+                    f"[RGB Warning] {os.path.basename(path)} 缺失颜色通道: {', '.join(missing_channels)}，已用灰色填充")
         s3dis_data = np.hstack([
             coords,
             colors,

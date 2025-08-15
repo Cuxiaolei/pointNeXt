@@ -151,8 +151,26 @@ class S3DISTower(Dataset):
                 coord, feat, label, self.split, self.voxel_size, self.voxel_max,
                 downsample=not self.presample, variable=self.variable, shuffle=self.shuffle)
 
+        # 获取样本名称（方便调试输出）
+        sample_name = self.data_names[idx] if hasattr(self, "data_names") else f"idx_{idx}"
+
         # 保证格式正确
         coord, feat, label = _ensure_shapes(coord, feat, label)
+
+        # ===== 调试日志：检查特征缺失 =====
+        if feat is None or feat.shape[1] < 3:
+            print(f"[Debug][{self.split}] {sample_name} 缺失 RGB 特征: "
+                  f"feat shape={None if feat is None else feat.shape}")
+        else:
+            # 检查每个通道是否恒为0或恒为128（可能是补齐值）
+            for ch_idx, ch_name in enumerate(["R", "G", "B"]):
+                unique_vals = np.unique(feat[:, ch_idx])
+                if len(unique_vals) == 1:
+                    print(f"[Debug][{self.split}] {sample_name} {ch_name} 通道恒为 {unique_vals[0]}，可能缺失原始值")
+        # =================================
+
+
+
         coord, feat, mask = _sanitize_numeric(coord, feat)
         if label is not None:
             label = label[mask]
