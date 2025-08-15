@@ -1,8 +1,8 @@
 # data augmentation
 dataset:
   common:
-    NAME: S3DIS
-    data_root: data/S3DIS/s3disfull
+    NAME: S3DISTower
+    data_root: root/autodl-tmp/raw
     test_area: 5
     voxel_size: 0.04
   train:
