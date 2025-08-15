@@ -24,8 +24,6 @@ from openpoints.loss import build_criterion_from_cfg
 from openpoints.models import build_model_from_cfg
 import warnings
 
-
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
@@ -41,36 +39,6 @@ def write_to_csv(oa, macc, miou, ious, best_epoch, cfg, write_header=True, area=
             writer.writerow(header)
         writer.writerow(data)
         f.close()
-
-# 新增
-def save_epoch_results(epoch, train_metrics, val_metrics, csv_path):
-    """保存每个epoch的训练和验证指标到CSV"""
-    header = [
-                 'epoch', 'train_loss', 'train_miou', 'train_macc', 'train_oa',
-                 'val_miou', 'val_macc', 'val_oa'
-             ] + [f'val_iou_cls_{i}' for i in range(len(val_metrics.get('ious', [])))]
-
-    row = [
-        epoch,
-        f"{train_metrics['loss']:.4f}",
-        f"{train_metrics['miou']:.4f}",
-        f"{train_metrics['macc']:.4f}",
-        f"{train_metrics['oa']:.4f}",
-        f"{val_metrics['miou']:.4f}" if val_metrics else '',
-        f"{val_metrics['macc']:.4f}" if val_metrics else '',
-        f"{val_metrics['oa']:.4f}" if val_metrics else ''
-    ]
-    if val_metrics and 'ious' in val_metrics:
-        row += [f"{iou:.4f}" for iou in val_metrics['ious']]
-
-    file_exists = os.path.exists(csv_path)
-    with open(csv_path, 'a', encoding='UTF8', newline='') as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(header)
-        writer.writerow(row)
-
-
 
 
 def generate_data_list(cfg):
@@ -151,6 +119,7 @@ def main(gpu, cfg):
                                 rank=cfg.rank)
         dist.barrier()
 
+    # logger
     setup_logger_dist(cfg.log_path, cfg.rank, name=cfg.dataset.common.NAME)
     if cfg.rank == 0:
         Wandb.launch(cfg, cfg.wandb.use_wandb)
@@ -176,9 +145,11 @@ def main(gpu, cfg):
         model = nn.parallel.DistributedDataParallel(model.cuda(), device_ids=[cfg.rank], output_device=cfg.rank)
         logging.info('Using Distributed Data parallel ...')
 
+    # optimizer & scheduler
     optimizer = build_optimizer_from_cfg(model, lr=cfg.lr, **cfg.optimizer)
     scheduler = build_scheduler_from_cfg(cfg, optimizer)
 
+    # build dataset
     val_loader = build_dataloader_from_cfg(cfg.get('val_batch_size', cfg.batch_size),
                                            cfg.dataset,
                                            cfg.dataloader,
@@ -195,16 +166,15 @@ def main(gpu, cfg):
     cfg.cmap = np.array(val_loader.dataset.cmap) if hasattr(val_loader.dataset, 'cmap') else None
     validate_fn = validate if 'sphere' not in cfg.dataset.common.NAME.lower() else validate_sphere
 
+    # optionally resume from a checkpoint
     model_module = model.module if hasattr(model, 'module') else model
-
     if cfg.pretrained_path is not None:
         if cfg.mode == 'resume':
             resume_checkpoint(cfg, model, optimizer, scheduler, pretrained_path=cfg.pretrained_path)
         else:
             if cfg.mode == 'val':
                 best_epoch, best_val = load_checkpoint(model, pretrained_path=cfg.pretrained_path)
-                val_miou, val_macc, val_oa, val_ious, val_accs = validate_fn(model, val_loader, cfg, num_votes=1,
-                                                                             epoch=0)
+                val_miou, val_macc, val_oa, val_ious, val_accs = validate_fn(model, val_loader, cfg, num_votes=1, epoch=epoch)
                 with np.printoptions(precision=2, suppress=True):
                     logging.info(
                         f'Best ckpt @E{best_epoch},  val_oa , val_macc, val_miou: {val_oa:.2f} {val_macc:.2f} {val_miou:.2f}, '
@@ -224,6 +194,7 @@ def main(gpu, cfg):
                     cfg.csv_path = os.path.join(cfg.run_dir, cfg.run_name + '_test.csv')
                     write_to_csv(test_oa, test_macc, test_miou, test_ious, best_epoch, cfg)
                 return test_miou
+
             elif 'encoder' in cfg.mode:
                 if 'inv' in cfg.mode:
                     logging.info(f'Finetuning from {cfg.pretrained_path}')
@@ -231,6 +202,7 @@ def main(gpu, cfg):
                 else:
                     logging.info(f'Finetuning from {cfg.pretrained_path}')
                     load_checkpoint(model_module.encoder, cfg.pretrained_path, cfg.get('pretrained_module', None))
+
             else:
                 logging.info(f'Finetuning from {cfg.pretrained_path}')
                 load_checkpoint(model, cfg.pretrained_path, cfg.get('pretrained_module', None))
@@ -258,9 +230,7 @@ def main(gpu, cfg):
             logging.info('`num_per_class` attribute is not founded in dataset')
     criterion = build_criterion_from_cfg(cfg.criterion_args).cuda()
 
-    # 初始化每个epoch的结果保存路径
-    epoch_csv_path = os.path.join(cfg.run_dir, f'{cfg.run_name}_epoch_results.csv')
-
+    # ===> start training
     if cfg.use_amp:
         scaler = torch.cuda.amp.GradScaler()
     else:
@@ -272,34 +242,14 @@ def main(gpu, cfg):
     for epoch in range(cfg.start_epoch, cfg.epochs + 1):
         if cfg.distributed:
             train_loader.sampler.set_epoch(epoch)
-        if hasattr(train_loader.dataset, 'epoch'):
+        if hasattr(train_loader.dataset, 'epoch'):  # some dataset sets the dataset length as a fixed steps.
             train_loader.dataset.epoch = epoch - 1
-
-        # 训练一个epoch，获取训练指标
         train_loss, train_miou, train_macc, train_oa, _, _, total_iter = \
             train_one_epoch(model, train_loader, criterion, optimizer, scheduler, scaler, epoch, total_iter, cfg)
 
-        # 收集训练指标
-        train_metrics = {
-            'loss': train_loss,
-            'miou': train_miou,
-            'macc': train_macc,
-            'oa': train_oa
-        }
-
-        # 验证并收集验证指标
-        val_metrics = None
         is_best = False
         if epoch % cfg.val_freq == 0:
-            val_miou, val_macc, val_oa, val_ious, val_accs = validate_fn(model, val_loader, cfg, epoch=epoch,
-                                                                         total_iter=total_iter)
-            val_metrics = {
-                'miou': val_miou,
-                'macc': val_macc,
-                'oa': val_oa,
-                'ious': val_ious
-            }
-
+            val_miou, val_macc, val_oa, val_ious, val_accs = validate_fn(model, val_loader, cfg, epoch=epoch, total_iter=total_iter)
             if val_miou > best_val:
                 is_best = True
                 best_val = val_miou
@@ -311,10 +261,6 @@ def main(gpu, cfg):
                     logging.info(
                         f'Find a better ckpt @E{epoch}, val_miou {val_miou:.2f} val_macc {macc_when_best:.2f}, val_oa {oa_when_best:.2f}'
                         f'\nmious: {val_ious}')
-
-        # 保存当前epoch的指标到CSV
-        if cfg.rank == 0:  # 只在主进程保存
-            save_epoch_results(epoch, train_metrics, val_metrics, epoch_csv_path)
 
         lr = optimizer.param_groups[0]['lr']
         logging.info(f'Epoch {epoch} LR {lr:.6f} '
@@ -333,58 +279,62 @@ def main(gpu, cfg):
 
         if cfg.sched_on_epoch:
             scheduler.step(epoch)
-
         if cfg.rank == 0:
             save_checkpoint(cfg, model, epoch, optimizer, scheduler,
                             additioanl_dict={'best_val': best_val},
                             is_best=is_best
                             )
             is_best = False
+    # do not save file to wandb to save wandb space
+    # if writer is not None:
+    #     Wandb.add_file(os.path.join(cfg.ckpt_dir, f'{cfg.run_name}_ckpt_best.pth'))
+    # Wandb.add_file(os.path.join(cfg.ckpt_dir, f'{cfg.logname}_ckpt_latest.pth'))
 
+    # validate
     with np.printoptions(precision=2, suppress=True):
         logging.info(
             f'Best ckpt @E{best_epoch},  val_oa {oa_when_best:.2f}, val_macc {macc_when_best:.2f}, val_miou {best_val:.2f}, '
             f'\niou per cls is: {ious_when_best}')
 
-    if cfg.world_size < 2:
+    if cfg.world_size < 2:  # do not support multi gpu testing
+        # test
         load_checkpoint(model, pretrained_path=os.path.join(cfg.ckpt_dir, f'{cfg.run_name}_ckpt_best.pth'))
         cfg.csv_path = os.path.join(cfg.run_dir, cfg.run_name + f'.csv')
         if 'sphere' in cfg.dataset.common.NAME.lower():
-            test_miou, test_macc, test_oa, test_ious, test_accs = validate_sphere(model, val_loader, cfg, epoch=0)
+            # TODO: 
+            test_miou, test_macc, test_oa, test_ious, test_accs = validate_sphere(model, val_loader, cfg, epoch=epoch)
         else:
             data_list = generate_data_list(cfg)
             test_miou, test_macc, test_oa, test_ious, test_accs, _ = test(model, data_list, cfg)
-
         with np.printoptions(precision=2, suppress=True):
             logging.info(
                 f'Best ckpt @E{best_epoch},  test_oa {test_oa:.2f}, test_macc {test_macc:.2f}, test_miou {test_miou:.2f}, '
                 f'\niou per cls is: {test_ious}')
         if writer is not None:
-            writer.add_scalar('test_miou', test_miou, 0)
-            writer.add_scalar('test_macc', test_macc, 0)
-            writer.add_scalar('test_oa', test_oa, 0)
+            writer.add_scalar('test_miou', test_miou, epoch)
+            writer.add_scalar('test_macc', test_macc, epoch)
+            writer.add_scalar('test_oa', test_oa, epoch)
         write_to_csv(test_oa, test_macc, test_miou, test_ious, best_epoch, cfg, write_header=True)
         logging.info(f'save results in {cfg.csv_path}')
         if cfg.use_voting:
             load_checkpoint(model, pretrained_path=os.path.join(cfg.ckpt_dir, f'{cfg.run_name}_ckpt_best.pth'))
             set_random_seed(cfg.seed)
             val_miou, val_macc, val_oa, val_ious, val_accs = validate_fn(model, val_loader, cfg, num_votes=20,
-                                                                         data_transform=None, epoch=0)
+                                                                         data_transform=data_transform, epoch=epoch)
             if writer is not None:
                 writer.add_scalar('val_miou20', val_miou, cfg.epochs + 50)
 
             ious_table = [f'{item:.2f}' for item in val_ious]
             data = [cfg.cfg_basename, 'True', f'{val_oa:.2f}', f'{val_macc:.2f}', f'{val_miou:.2f}'] + ious_table + [
                 str(best_epoch), cfg.run_dir]
-
             with open(cfg.csv_path, 'w', encoding='UT8') as f:
                 writer = csv.writer(f)
                 writer.writerow(data)
     else:
-        logging.warning(
-            'Testing using multiple GPUs is not allowed for now. Running testing after this training is required.')
+        logging.warning('Testing using multiple GPUs is not allowed for now. Running testing after this training is required.')
     if writer is not None:
         writer.close()
+    # dist.destroy_process_group() # comment this line due to https://github.com/guochengqian/PointNeXt/issues/95
     wandb.finish(exit_code=True)
 
 
