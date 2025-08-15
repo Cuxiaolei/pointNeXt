@@ -1,29 +1,28 @@
 # data augmentation
 dataset:
   common:
-    NAME: S3DISTower
-    data_root: /root/autodl-tmp
+    NAME: S3DIS
+    data_root: /root/data/data_s3dis_pointNeXt
     test_area: 5
     voxel_size: 0.04
   train:
     split: train
-    voxel_max: 12000
+    voxel_max: null
     loop: 30  # here, the training has been looped 30 times. therefore, the training epochs do not need much.
-    presample: True
+    presample: False
   val:
     split: val
-    voxel_max: 12000      # 限制最大点数，防止卡死
-    presample: True       # 缓存采样结果，加快验证
-    batch_size: 4         # 每次验证 4 个样本，提升并行度
+    voxel_max: null
+    presample: True
   test:
     split: test
-    voxel_max: 12000
+    voxel_max: null
     presample: False 
 
 feature_keys: x
 num_classes: 3
-batch_size: 2
-val_batch_size: 4
+batch_size: 32
+val_batch_size: 1
 
 dataloader:
   num_workers: 6

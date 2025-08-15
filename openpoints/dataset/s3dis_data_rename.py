@@ -1,7 +1,7 @@
 import os
 
 # 文件所在的目录路径，根据实际情况修改
-folder_path = r"/root/autodl-tmp/raw"
+folder_path = r"D:\user\Documents\ai\paper\1_process\dataSet\s3dis_pointNeXt\output\raw"
 
 # 遍历目录下的文件
 for filename in os.listdir(folder_path):
