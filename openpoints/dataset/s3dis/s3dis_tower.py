@@ -8,27 +8,32 @@ from torch.utils.data import Dataset
 from ..data_util import crop_pc, voxelize
 from ..build import DATASETS
 
-# ====== >>> ADDED: safety helpers for shape / NaN / subsample  ======
+
 def _ensure_2d(arr, name):
+    """确保数组是二维的"""
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
     if arr.ndim != 2:
         raise ValueError(f"{name} must be 2D, got shape {arr.shape}")
     return arr
 
+
 def _sanitize_numeric(coord, feat):
+    """去掉 NaN/Inf 并填 0"""
     mask_c = np.isfinite(coord).all(axis=1)
     mask_f = np.isfinite(feat).all(axis=1) if feat is not None else np.ones(len(coord), dtype=bool)
     mask = mask_c & mask_f
     if not mask.all():
         coord = coord[mask]
-        feat  = feat[mask] if feat is not None else None
+        feat = feat[mask] if feat is not None else None
     coord = np.nan_to_num(coord, nan=0.0, posinf=0.0, neginf=0.0)
     if feat is not None:
         feat = np.nan_to_num(feat, nan=0.0, posinf=0.0, neginf=0.0)
     return coord, feat, mask
 
+
 def _limit_points(coord, feat, label, voxel_max, split, sample_name):
+    """限制点数到 voxel_max"""
     if voxel_max is None or voxel_max <= 0:
         return coord, feat, label
     n = coord.shape[0]
@@ -36,14 +41,16 @@ def _limit_points(coord, feat, label, voxel_max, split, sample_name):
         choice = np.random.choice(n, voxel_max, replace=False)
         coord = coord[choice]
         if feat is not None:
-            feat  = feat[choice]
+            feat = feat[choice]
         if label is not None:
             label = label[choice]
         if split != 'train':
             print(f"[{split}] limit points: {sample_name} {n} -> {voxel_max}")
     return coord, feat, label
 
+
 def _ensure_shapes(coord, feat, label):
+    """确保列数符合 XYZ+RGB+Label 的要求"""
     coord = _ensure_2d(coord, "coord")
     if coord.shape[1] != 3:
         raise ValueError(f"coord must have 3 columns, got {coord.shape[1]}")
@@ -56,7 +63,7 @@ def _ensure_shapes(coord, feat, label):
         if label.shape[1] != 1:
             raise ValueError(f"label must have 1 column, got {label.shape[1]}")
     return coord, feat, label
-# ====== <<< ADDED  ======
+
 
 @DATASETS.register_module()
 class S3DISTower(Dataset):
@@ -95,9 +102,9 @@ class S3DISTower(Dataset):
         data_list = sorted(os.listdir(raw_root))
         data_list = [item[:-4] for item in data_list if 'Area_' in item]
         if split == 'train':
-            self.data_list = [item for item in data_list if not 'Area_{}'.format(test_area) in item]
+            self.data_list = [item for item in data_list if not f'Area_{test_area}' in item]
         else:
-            self.data_list = [item for item in data_list if 'Area_{}'.format(test_area) in item]
+            self.data_list = [item for item in data_list if f'Area_{test_area}' in item]
 
         processed_root = os.path.join(data_root, 'processed')
         filename = os.path.join(
@@ -110,7 +117,7 @@ class S3DISTower(Dataset):
                 cdata = np.load(data_path).astype(np.float32)
                 cdata[:, :3] -= np.min(cdata[:, :3], 0)
                 if voxel_size:
-                    coord, feat, label = cdata[:,0:3], cdata[:, 3:6], cdata[:, 6:7]
+                    coord, feat, label = cdata[:, 0:3], cdata[:, 3:6], cdata[:, 6:7]
                     uniq_idx = voxelize(coord, voxel_size)
                     coord, feat, label = coord[uniq_idx], feat[uniq_idx], label[uniq_idx]
                     cdata = np.hstack((coord, feat, label))
@@ -126,6 +133,7 @@ class S3DISTower(Dataset):
             with open(filename, 'rb') as f:
                 self.data = pickle.load(f)
                 print(f"{filename} load successfully")
+
         self.data_idx = np.arange(len(self.data_list))
         assert len(self.data_idx) > 0
         logging.info(f"\nTotally {len(self.data_idx)} samples in {split} set")
@@ -143,18 +151,23 @@ class S3DISTower(Dataset):
                 coord, feat, label, self.split, self.voxel_size, self.voxel_max,
                 downsample=not self.presample, variable=self.variable, shuffle=self.shuffle)
 
-        # ====== >>> ADDED: enforce shapes, sanitize, limit points ======
-        try:
-            coord, feat, label = _ensure_shapes(coord, feat, label)
-            coord, feat, mask = _sanitize_numeric(coord, feat)
-            if label is not None:
-                label = label[mask]
-            voxel_max = getattr(self, 'voxel_max', None)
-            sample_name = self.data_list[data_idx] if hasattr(self, 'data_list') else f"idx_{data_idx}"
-            coord, feat, label = _limit_points(coord, feat, label, voxel_max, self.split, sample_name)
-        except Exception as e:
-            raise RuntimeError(f"[{self.split}] data sample crashed at index {data_idx}: {e}")
-        # ====== <<< ADDED ======
+        # 保证格式正确
+        coord, feat, label = _ensure_shapes(coord, feat, label)
+        coord, feat, mask = _sanitize_numeric(coord, feat)
+        if label is not None:
+            label = label[mask]
+        voxel_max = getattr(self, 'voxel_max', None)
+        sample_name = self.data_list[data_idx] if hasattr(self, 'data_list') else f"idx_{data_idx}"
+        coord, feat, label = _limit_points(coord, feat, label, voxel_max, self.split, sample_name)
+
+        # ====== 新增安全检查 ======
+        if coord.shape[0] < 1:
+            raise ValueError(f"[{self.split}] sample {sample_name} has no points after processing")
+        if not np.isfinite(coord).all() or not np.isfinite(feat).all():
+            raise ValueError(f"[{self.split}] sample {sample_name} contains NaN/Inf values")
+        if feat.shape[1] + coord.shape[1] != 6:
+            raise ValueError(f"[{self.split}] sample {sample_name} feature dim mismatch: coord({coord.shape[1]})+feat({feat.shape[1]}) != 6")
+        # =========================
 
         full_feat = np.hstack([coord, feat])
         label = label.squeeze(-1).astype(np.long)
