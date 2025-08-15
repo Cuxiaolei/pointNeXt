@@ -104,6 +104,8 @@ class S3DISTower(Dataset):
         data_idx = self.data_idx[idx % len(self.data_idx)]
         if self.presample:
             coord, feat, label = np.split(self.data[data_idx], [3, 6], axis=1)
+            # 将 XYZ 与 RGB 拼接作为特征
+            full_feat = np.hstack([coord, feat])
         else:
             data_path = os.path.join(
                 self.raw_root, self.data_list[data_idx] + '.npy')
@@ -113,9 +115,11 @@ class S3DISTower(Dataset):
             coord, feat, label = crop_pc(
                 coord, feat, label, self.split, self.voxel_size, self.voxel_max,
                 downsample=not self.presample, variable=self.variable, shuffle=self.shuffle)
-            # TODO: do we need to -np.min in cropped data?
+            # 将 XYZ 与 RGB 拼接作为特征
+            full_feat = np.hstack([coord, feat])
+
         label = label.squeeze(-1).astype(np.long)
-        data = {'pos': coord, 'x': feat, 'y': label}
+        data = {'pos': coord, 'x': full_feat, 'y': label}
         # pre-process.
         if self.transform is not None:
             data = self.transform(data)
