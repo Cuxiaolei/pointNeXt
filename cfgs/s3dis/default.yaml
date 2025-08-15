@@ -12,11 +12,11 @@ dataset:
     presample: False
   val:
     split: val
-    voxel_max: null
+    voxel_max: 12000
     presample: True 
   test:
     split: test
-    voxel_max: null
+    voxel_max: 12000
     presample: False 
 
 feature_keys: x
