@@ -17,11 +17,26 @@ label_mapping = {
     "引流线": 2,
     "地线": 2
 }
-# 背景 = BETA × (N0 + N2)；等价于 (0+2) = 0.8 × 背景 ⇒ BETA = 1.25
-BETA = 1.25
-BG_MIN = 3_000_000        # 背景保底总点数
-MIN_POINTS_PER_FILE = 500 # 每文件至少保留点数
+BETA = 1.25                # 背景 = BETA × (N0 + N2)
+BG_MIN = 3_000_000         # 背景保底总点数
+MIN_POINTS_PER_FILE = 500  # 每文件至少保留点数
 # =============================================
+
+def ensure_feature_integrity(arr, label):
+    """确保每个点有7个特征（3坐标+3颜色+1标签）"""
+    if arr.shape[1] < 7:
+        print(f"[修复] 列数不足 {arr.shape[1]} → 7")
+        coords = arr[:, :3] if arr.shape[1] >= 3 else np.zeros((len(arr), 3), dtype=np.float32)
+        if arr.shape[1] >= 6:
+            colors = arr[:, 3:6]
+        else:
+            colors = np.ones((len(arr), 3), dtype=np.uint8) * 128
+        labels = np.full((len(arr), 1), label, dtype=np.int32)
+        arr = np.hstack([coords, colors, labels])
+    elif arr.shape[1] > 7:
+        print(f"[修复] 列数过多 {arr.shape[1]} → 截取前7列")
+        arr = arr[:, :7]
+    return arr
 
 def count_points_per_file(las_input_dir):
     """统计每个文件各类别点数"""
@@ -70,8 +85,7 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
         bg_file_quota = None
 
     final_counts = {0: 0, 1: 0, 2: 0}
-    min_points_list = []
-    boosted_files = []  # 记录补点的文件
+    boosted_files = []
 
     for fname in tqdm(os.listdir(las_input_dir), desc="处理文件"):
         if not fname.endswith(".las"):
@@ -102,6 +116,9 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
             np.full((len(coords), 1), s3dis_label, dtype=np.int32)
         ])
 
+        # 第一次特征检查（刚读完文件）
+        s3dis_data = ensure_feature_integrity(s3dis_data, s3dis_label)
+
         # 背景类采样
         if balance and s3dis_label == 1:
             quota = bg_file_quota.get(fname, len(s3dis_data))
@@ -110,54 +127,30 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
                 idx = np.random.choice(len(s3dis_data), quota, replace=False)
                 s3dis_data = s3dis_data[idx]
 
-        # ===== 特征完整性检查 =====
-        if s3dis_data.shape[1] < 7:
-            print(f"[警告] {fname} 列数不足 ({s3dis_data.shape[1]} 列)，已补齐到 7 列")
-            missing_cols = 7 - s3dis_data.shape[1]
-            if missing_cols > 1:
-                s3dis_data = np.hstack([
-                    s3dis_data[:, :3],
-                    np.ones((len(s3dis_data), 3), dtype=np.uint8) * 128,
-                    s3dis_data[:, 3:] if s3dis_data.shape[1] > 3 else np.full((len(s3dis_data), 1), s3dis_label, dtype=np.int32)
-                ])
-            elif missing_cols == 1:
-                s3dis_data = np.hstack([
-                    s3dis_data,
-                    np.full((len(s3dis_data), 1), s3dis_label, dtype=np.int32)
-                ])
-        elif s3dis_data.shape[1] > 7:
-            print(f"[提示] {fname} 列数超过 7 ({s3dis_data.shape[1]} 列)，已截取前 7 列")
-            s3dis_data = s3dis_data[:, :7]
-        # =======================
-
-        # ===== 全局保底点数检查 =====
+        # 保底点数
         if len(s3dis_data) < MIN_POINTS_PER_FILE:
             repeat_factor = int(np.ceil(MIN_POINTS_PER_FILE / len(s3dis_data)))
             s3dis_data = np.tile(s3dis_data, (repeat_factor, 1))[:MIN_POINTS_PER_FILE]
             boosted_files.append(fname)
-        # ========================
+
+        # 最终特征检查（保存前兜底）
+        s3dis_data = ensure_feature_integrity(s3dis_data, s3dis_label)
 
         final_counts[s3dis_label] += len(s3dis_data)
-        min_points_list.append(len(s3dis_data))
 
-        # 保存 .npy（只加 Area_ 前缀）
+        # 保存文件（Area_ 前缀）
         if not fname.startswith("Area_"):
             npy_name = f"Area_{fname.replace('.las', '.npy')}"
         else:
             npy_name = fname.replace(".las", ".npy")
-
-        output_path = os.path.join(raw_dir, npy_name)
-        np.save(output_path, s3dis_data)
+        np.save(os.path.join(raw_dir, npy_name), s3dis_data)
 
     print("\n==== 最终采样后的类别点数分布 ====")
     total_points = sum(final_counts.values())
     for cls_id, count in final_counts.items():
-        pct = (count / total_points) if total_points > 0 else 0.0
-        print(f"类别 {cls_id}: {count:,} 点 ({pct:.2%})")
+        print(f"类别 {cls_id}: {count:,} 点 ({count / total_points:.2%})")
     print(f"总点数: {total_points:,}")
-    print(f"最小文件点数: {min(min_points_list)}")
-    if boosted_files:
-        print(f"保底补点的文件数量: {len(boosted_files)}，示例: {boosted_files[:5]}")
+    print(f"保底补点文件数: {len(boosted_files)}，示例: {boosted_files[:5]}")
 
 if __name__ == "__main__":
     LAS_INPUT_DIR = r"D:\user\Documents\ai\paper\1_process\dataSet\s3dis_pointNeXt\input"
