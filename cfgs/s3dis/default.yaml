@@ -7,7 +7,7 @@ dataset:
     voxel_size: 0.04
   train:
     split: train
-    voxel_max: null
+    voxel_max: 12000
     loop: 30  # here, the training has been looped 30 times. therefore, the training epochs do not need much.
     presample: False
   val:

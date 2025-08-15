@@ -2,9 +2,8 @@ import os
 import numpy as np
 import laspy
 from tqdm import tqdm
-from collections import defaultdict
 
-# ================== 配置 ==================
+# ================== 参数配置 ==================
 label_mapping = {
     "铁塔": 0,
     "绝缘子": 0,
@@ -20,8 +19,9 @@ label_mapping = {
 }
 # 背景 = BETA × (N0 + N2)；等价于 (0+2) = 0.8 × 背景 ⇒ BETA = 1.25
 BETA = 1.25
-BG_MIN = 3_000_000    # 背景保底点数，防止太少
-# =========================================
+BG_MIN = 3_000_000      # 背景保底总点数
+MIN_POINTS_PER_FILE = 500  # 每个文件至少保留点数
+# =============================================
 
 def count_points_per_file(las_input_dir):
     """统计每个文件各类别点数"""
@@ -44,24 +44,22 @@ def count_points_per_file(las_input_dir):
     return file_class_counts, total_class_counts
 
 def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
-    s3dis_raw_dir = os.path.join(s3dis_output_dir, "raw")
-    os.makedirs(s3dis_raw_dir, exist_ok=True)
+    raw_dir = os.path.join(s3dis_output_dir, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
 
     file_class_counts, total_class_counts = count_points_per_file(las_input_dir)
 
     if balance:
         N0, N1, N2 = total_class_counts[0], total_class_counts[1], total_class_counts[2]
         target_background_total = min(
-            N1,  # 不超过原始背景总量
-            max(BG_MIN, int(BETA * (N0 + N2)))  # 背景 = 1.25 × (0+2)，保底
+            N1,
+            max(BG_MIN, int(BETA * (N0 + N2)))
         )
         print(f"\n类别总点数: {total_class_counts}")
         print(f"目标背景总点数: {target_background_total:,}")
-        # 也打印一下 (0+2)/(目标背景) ，应接近 0.8
         ratio = (N0 + N2) / target_background_total if target_background_total > 0 else 0
         print(f"(0+2) : 背景 ≈ {ratio:.3f}")
 
-        # 按文件比例分配背景配额（保证每个文件都有样本）
         total_bg_points = total_class_counts[1]
         bg_file_quota = {}
         for fname, counts in file_class_counts.items():
@@ -71,7 +69,6 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
     else:
         bg_file_quota = None
 
-    # 最终统计
     final_counts = {0: 0, 1: 0, 2: 0}
 
     for fname in tqdm(os.listdir(las_input_dir), desc="处理文件"):
@@ -103,19 +100,30 @@ def process_las_to_s3dis(las_input_dir, s3dis_output_dir, balance=True):
             np.full((len(coords), 1), s3dis_label, dtype=np.int32)
         ])
 
-        # 背景类采样（按文件配额）
         if balance and s3dis_label == 1:
             quota = bg_file_quota.get(fname, len(s3dis_data))
+            quota = max(quota, MIN_POINTS_PER_FILE)  # 每文件保底
             if len(s3dis_data) > quota:
                 idx = np.random.choice(len(s3dis_data), quota, replace=False)
                 s3dis_data = s3dis_data[idx]
+        elif len(s3dis_data) < MIN_POINTS_PER_FILE:
+            # 小文件也保底
+            repeat_factor = int(np.ceil(MIN_POINTS_PER_FILE / len(s3dis_data)))
+            s3dis_data = np.tile(s3dis_data, (repeat_factor, 1))[:MIN_POINTS_PER_FILE]
 
         final_counts[s3dis_label] += len(s3dis_data)
 
-        output_npy_path = os.path.join(s3dis_raw_dir, fname.replace(".las", ".npy"))
-        np.save(output_npy_path, s3dis_data)
+        # 自动加 Area_1_ 前缀
+        if not fname.startswith("Area_"):
+            npy_name = f"Area_1_{fname.replace('.las', '.npy')}"
+        else:
+            # 修正已有 Area_ 开头的文件
+            parts = fname.split("_")
+            npy_name = "_".join(["Area"] + parts[2:]).replace(".las", ".npy")
 
-    # 输出最终比例
+        output_path = os.path.join(raw_dir, npy_name)
+        np.save(output_path, s3dis_data)
+
     print("\n==== 最终采样后的类别点数分布 ====")
     total_points = sum(final_counts.values())
     for cls_id, count in final_counts.items():
