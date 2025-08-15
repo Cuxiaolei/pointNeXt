@@ -1,7 +1,7 @@
 # data augmentation
 dataset:
   common:
-    NAME: S3DIS
+    NAME: S3DISTower
     data_root: /root/data/data_s3dis_pointNeXt
     test_area: 5
     voxel_size: 0.04
