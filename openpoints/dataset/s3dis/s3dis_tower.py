@@ -39,7 +39,7 @@ class S3DISTower(Dataset):
         variable (bool, optional): where to use the original number of points. The number of point per point cloud is variable. Defaults to False.
     """
     def __init__(self,
-                 data_root: str = 'root/data/s3dis/raw',
+                 data_root: str = '/root/autodl-tmp/raw',
                  test_area: int = 5,
                  voxel_size: float = 0.04,
                  voxel_max=None,
