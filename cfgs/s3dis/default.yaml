@@ -3,7 +3,7 @@ dataset:
   common:
     NAME: S3DISTower
     data_root: /root/data/data_s3dis_pointNeXt
-    test_area: 4
+    test_area: 1
     voxel_size: 0.04
   train:
     split: train
@@ -44,7 +44,7 @@ datatransforms:
 # ---------------------------------------------------------------------------- #
 val_fn: validate
 ignore_index: null 
-epochs: 100
+epochs: 10
 
 cls_weighed_loss: False
 
