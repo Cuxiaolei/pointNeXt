@@ -493,7 +493,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, scaler
         cm.update(logits.argmax(dim=1), target)
         loss_meter.update(loss.item())
 
-        if idx % cfg.print_freq:
+        if idx % cfg.print_freq == 0:
             pbar.set_description(f"Train Epoch [{epoch}/{cfg.epochs}] "
                                  f"Loss {loss_meter.val:.3f} Acc {cm.overall_accuray:.2f}")
     miou, macc, oa, ious, accs = cm.all_metrics()
