@@ -119,8 +119,20 @@ class S3DISTower(Dataset):
             raise FileNotFoundError(f"Missing split file: {list_file}")
 
         logging.info(f"[{split}] Using scene list file: {list_file}")
+
+        self.data_list = []
         with open(list_file, "r") as f:
-            self.data_list = [line.strip() for line in f.readlines() if line.strip()]
+            for line in f.readlines():
+                name = line.strip()
+                if not name:
+                    continue
+                # 去掉目录前缀
+                if name.startswith("merged/"):
+                    name = name.split("/")[-1]
+                # 去掉扩展名
+                if name.endswith(".npy"):
+                    name = name[:-4]
+                self.data_list.append(name)
 
         logging.info(
             f"[{split}] Found {len(self.data_list)} scenes: {self.data_list[:5]}{'...' if len(self.data_list) > 5 else ''}")
