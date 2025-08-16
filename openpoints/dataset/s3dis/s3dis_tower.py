@@ -101,11 +101,10 @@ class S3DISTower(Dataset):
         merged_root = os.path.join(data_root, 'merged')
         self.merged_root = merged_root
 
-        # 修改: 读取 train_scenes.txt / val_scenes.txt / test_scenes.txt
+        # 🔑 这里读取 train/val/test_scenes.txt
         split_file = os.path.join(data_root, f"{split}_scenes.txt")
-        assert os.path.exists(split_file), f"{split_file} 不存在，请先运行数据预处理生成"
         with open(split_file, "r") as f:
-            self.data_list = [line.strip() for line in f.readlines() if line.strip()]
+            self.files = [line.strip() for line in f.readlines()]  # 每一行是 "merged/Area_xxx.npy"
 
         processed_root = os.path.join(data_root, 'processed')
         filename = os.path.join(
