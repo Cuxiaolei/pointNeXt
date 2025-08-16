@@ -76,9 +76,26 @@ def save_epoch_results(epoch, train_metrics, val_metrics, csv_path):
 def generate_data_list(cfg):
     if 's3dis' in cfg.dataset.common.NAME.lower():
         raw_root = os.path.join(cfg.dataset.common.data_root, 'raw')
-        data_list = sorted(os.listdir(raw_root))
-        data_list = [os.path.join(raw_root, item) for item in data_list if
-                     'Area_{}'.format(cfg.dataset.common.test_area) in item]
+        fnames = [f for f in sorted(os.listdir(raw_root))
+                  if f.endswith('.npy') and f'Area_{cfg.dataset.common.test_area}' in f]
+
+        # 新增：默认把同一场景的单类文件合并为一组，后续在 load_data 里一起读取
+        combine = cfg.get('combine_scene_files', True)
+        if combine:
+            groups = {}
+            for f in fnames:
+                # 以最后一个下划线为界，把 "Area_5-6(5_6)_铁塔.npy" 归并为 "Area_5-6(5_6)"
+                base = f.rsplit('_', 1)[0]
+                groups.setdefault(base, []).append(os.path.join(raw_root, f))
+            # 每个元素是一组同场景的文件路径
+            data_list = [sorted(v) for v in groups.values()]
+        else:
+            # 保持旧行为：逐文件评测（不建议）
+            data_list = [os.path.join(raw_root, f) for f in fnames]
+
+        # data_list = sorted(os.listdir(raw_root))
+        # data_list = [os.path.join(raw_root, item) for item in data_list if
+        #              'Area_{}'.format(cfg.dataset.common.test_area) in item]
     elif 'scannet' in cfg.dataset.common.NAME.lower():
         data_list = glob.glob(os.path.join(cfg.dataset.common.data_root, cfg.dataset.test.split, "*.pth"))
     elif 'semantickitti' in cfg.dataset.common.NAME.lower():
@@ -96,9 +113,18 @@ def generate_data_list(cfg):
 def load_data(data_path, cfg):
     label, feat = None, None
     if 's3dis' in cfg.dataset.common.NAME.lower():
-        data = np.load(data_path)  # xyzrgbl, N*7
+        # 新增：支持一个 cloud 是“同场景多文件”的 list
+        if isinstance(data_path, (list, tuple)):
+            arrays = [np.load(p) for p in data_path]  # 每个都是 N_i x 7 (xyz rgb label)
+            data = np.concatenate(arrays, axis=0)
+        else:
+            data = np.load(data_path)
+
         coord, feat, label = data[:, :3], data[:, 3:6], data[:, 6]
         feat = np.clip(feat / 255., 0, 1).astype(np.float32)
+        # data = np.load(data_path)  # xyzrgbl, N*7
+        # coord, feat, label = data[:, :3], data[:, 3:6], data[:, 6]
+        # feat = np.clip(feat / 255., 0, 1).astype(np.float32)
     elif 'scannet' in cfg.dataset.common.NAME.lower():
         data = torch.load(data_path)  # xyzrgbl, N*7
         coord, feat = data[0], data[1]
