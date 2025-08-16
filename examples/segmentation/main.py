@@ -158,6 +158,10 @@ def load_data(data_path, cfg):
                 idx_points.append(idx_part)
     else:
         idx_points.append(np.arange(label.shape[0]))
+
+    # Debug: 标签分布
+    uniq, cnts = np.unique(label, return_counts=True)
+    print(f"[Debug][load_data] {os.path.basename(data_path)} 标签分布: {dict(zip(uniq.tolist(), cnts.tolist()))}")
     return coord, feat, label, idx_points, voxel_idx, reverse_idx_part, reverse_idx_sort
 
 

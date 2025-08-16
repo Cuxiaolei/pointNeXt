@@ -185,6 +185,7 @@ class S3DISTower(Dataset):
         if self.presample:
             # 从 pkl 中取出该场景
             coord, feat, label = np.split(self.data[data_idx], [3, 6], axis=1)
+
         else:
             # 直接从 merged 读取该场景的 .npy
             npy_path = os.path.join(self.merged_root, self.data_list[data_idx] + '.npy')
@@ -232,6 +233,13 @@ class S3DISTower(Dataset):
 
         full_feat = np.hstack([coord, feat])
         label = label.squeeze(-1).astype(np.long)
+
+        # Debug: 标签分布
+        if label is not None:
+            uniq, cnts = np.unique(label, return_counts=True)
+            print(f"[Debug][__getitem__] split={self.split}, sample={sample_name}, "
+                  f"标签分布: {dict(zip(uniq.tolist(), cnts.tolist()))}")
+
         data = {'pos': coord, 'x': full_feat, 'y': label}
         if self.transform is not None:
             data = self.transform(data)
