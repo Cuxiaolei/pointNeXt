@@ -623,10 +623,18 @@ def test(model, data_list, cfg, num_votes=1):
                 coord_part = coord[idx_part]
                 coord_part -= coord_part.min(0)
 
-                feat_part =  feat[idx_part] if feat is not None else None
+                feat_part = feat[idx_part] if feat is not None else None
                 data = {'pos': coord_part}
-                if feat_part is not None:
-                    data['x'] = feat_part
+
+                # 保证输入是 6 维 (XYZ + RGB)
+                if feat_part is not None and feat_part.shape[1] >= 3:
+                    # 拼接坐标和RGB
+                    data['x'] = np.hstack([coord_part, feat_part[:, :3]])
+                else:
+                    # 如果没有RGB，则用全0填充
+                    rgb_dummy = np.zeros_like(coord_part, dtype=np.float32)
+                    data['x'] = np.hstack([coord_part, rgb_dummy])
+
                 if pipe_transform is not None:
                     data = pipe_transform(data)
                 if 'heights' in cfg.feature_keys and 'heights' not in data.keys():
