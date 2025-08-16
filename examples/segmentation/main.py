@@ -621,6 +621,7 @@ def validate_sphere(model, val_loader, cfg, num_votes=1, data_transform=None, ep
     return miou, macc, oa, ious, accs
 
 
+
 # TODO: multi gpu support. Warp to a dataloader.
 @torch.no_grad()
 def test(model, data_list, cfg, num_votes=1):
@@ -662,8 +663,13 @@ def test(model, data_list, cfg, num_votes=1):
         cm = ConfusionMatrix(num_classes=cfg.num_classes, ignore_index=cfg.ignore_index)
         all_logits = []
         coord, feat, label, idx_points, voxel_idx, reverse_idx_part, reverse_idx  = load_data(data_path, cfg)
+
         if label is not None:
             label = torch.from_numpy(label.astype(np.int).squeeze()).cuda(non_blocking=True)
+            # ===== Debug: 整云 GT 标签分布 =====
+            gt_unique, gt_counts = np.unique(label.cpu().numpy(), return_counts=True)
+            logging.info(f"[Debug][test][cloud {cloud_idx}] GT 分布: {dict(zip(gt_unique.tolist(), gt_counts.tolist()))}")
+            # ===================================
 
         len_part = len(idx_points)
         nearest_neighbor = len_part == 1
@@ -680,10 +686,8 @@ def test(model, data_list, cfg, num_votes=1):
 
                 # 保证输入是 6 维 (XYZ + RGB)
                 if feat_part is not None and feat_part.shape[1] >= 3:
-                    # 拼接坐标和RGB
                     data['x'] = np.hstack([coord_part, feat_part[:, :3]])
                 else:
-                    # 如果没有RGB，则用全0填充
                     rgb_dummy = np.zeros_like(coord_part, dtype=np.float32)
                     data['x'] = np.hstack([coord_part, rgb_dummy])
 
@@ -705,15 +709,33 @@ def test(model, data_list, cfg, num_votes=1):
                 for key in data.keys():
                     data[key] = data[key].cuda(non_blocking=True)
                 data['x'] = get_features_by_keys(data, cfg.feature_keys)
-                if data['x'] is not None:
-                    logging.info(f"[Debug] 当前输入特征 shape: {data['x'].shape} （batch, 通道数, 点数）")
-                logits = model(data)
-                """visualization in debug mode. !!! visulization is not correct, should remove ignored idx.
-                from openpoints.dataset.vis3d import vis_points, vis_multi_points
-                vis_multi_points([coord, coord_part], labels=[label.cpu().numpy(), logits.argmax(dim=1).squeeze().cpu().numpy()])
-                """
 
+                # ===== Debug: 当前 subcloud 输入特征形状 =====
+                if data['x'] is not None:
+                    logging.info(f"[Debug][test][cloud {cloud_idx} sub {idx_subcloud}] 输入特征 shape: {tuple(data['x'].shape)} (B, C, N)")
+                # =======================================
+
+                logits = model(data)
+
+                # ===== Debug: 数值健康检查 + 预测/GT 分布（subcloud 级）=====
+                has_nan = torch.isnan(logits).any().item()
+                logit_min = logits.min().item()
+                logit_max = logits.max().item()
+                logging.info(f"[Debug][test][cloud {cloud_idx} sub {idx_subcloud}] logits nan: {has_nan}, min: {logit_min:.4f}, max: {logit_max:.4f}")
+
+                # 预测分布（沿类别维度取 argmax；此处 logits 形状为 (B, C, N)）
+                pred_sub = logits.argmax(dim=1).squeeze().detach().cpu().numpy()
+                u_pred, c_pred = np.unique(pred_sub, return_counts=True)
+                logging.info(f"[Debug][test][cloud {cloud_idx} sub {idx_subcloud}] 预测分布: {dict(zip(u_pred.tolist(), c_pred.tolist()))}")
+
+                # 对应的 GT 子片分布（如果有标签）
+                if label is not None:
+                    gt_sub = label[idx_part].detach().cpu().numpy()
+                    u_gt, c_gt = np.unique(gt_sub, return_counts=True)
+                    logging.info(f"[Debug][test][cloud {cloud_idx} sub {idx_subcloud}] GT分布: {dict(zip(u_gt.tolist(), c_gt.tolist()))}")
+                # ============================================================
             all_logits.append(logits)
+
         all_logits = torch.cat(all_logits, dim=0)
         if not cfg.dataset.common.get('variable', False):
             all_logits = all_logits.transpose(1, 2).reshape(-1, cfg.num_classes)
@@ -725,18 +747,25 @@ def test(model, data_list, cfg, num_votes=1):
         else:
             # interpolate logits by nearest neighbor
             all_logits = all_logits[reverse_idx_part][voxel_idx][reverse_idx]
+
         pred = all_logits.argmax(dim=1)
+
+        # ===== Debug: 整云聚合后的预测/真实分布 =====
+        u_pred_all, c_pred_all = np.unique(pred.cpu().numpy(), return_counts=True)
+        logging.info(f"[Debug][test][cloud {cloud_idx}] 聚合后预测分布: {dict(zip(u_pred_all.tolist(), c_pred_all.tolist()))}")
+        if label is not None:
+            u_gt_all, c_gt_all = np.unique(label.cpu().numpy(), return_counts=True)
+            logging.info(f"[Debug][test][cloud {cloud_idx}] 聚合后GT分布: {dict(zip(u_gt_all.tolist(), c_gt_all.tolist()))}")
+        # ============================================
+
         if label is not None:
             cm.update(pred, label)
-        """visualization in debug mode
-        from openpoints.dataset.vis3d import vis_points, vis_multi_points
-        vis_multi_points([coord, coord], labels=[label.cpu().numpy(), all_logits.argmax(dim=1).squeeze().cpu().numpy()])
-        """
+
         if cfg.visualize:
             gt = label.cpu().numpy().squeeze() if label is not None else None
-            pred = pred.cpu().numpy().squeeze()
+            pred_np = pred.cpu().numpy().squeeze()
             gt = cfg.cmap[gt, :] if gt is not None else None
-            pred = cfg.cmap[pred, :]
+            pred_vis = cfg.cmap[pred_np, :]
             # output pred labels
             if 's3dis' in dataset_name:
                 file_name = f'{dataset_name}-Area{cfg.dataset.common.test_area}-{cloud_idx}'
@@ -745,35 +774,33 @@ def test(model, data_list, cfg, num_votes=1):
 
             write_obj(coord, feat,
                       os.path.join(cfg.vis_dir, f'input-{file_name}.obj'))
-            # output ground truth labels
             if gt is not None:
                 write_obj(coord, gt,
-                        os.path.join(cfg.vis_dir, f'gt-{file_name}.obj'))
-            # output pred labels
-            write_obj(coord, pred,
+                          os.path.join(cfg.vis_dir, f'gt-{file_name}.obj'))
+            write_obj(coord, pred_vis,
                       os.path.join(cfg.vis_dir, f'{cfg.cfg_basename}-{file_name}.obj'))
 
         if cfg.get('save_pred', False):
             if 'semantickitti' in cfg.dataset.common.NAME.lower():
-                pred = pred + 1
-                pred = pred.cpu().numpy().squeeze()
-                pred = pred.astype(np.uint32)
-                upper_half = pred >> 16  # get upper half for instances
-                lower_half = pred & 0xFFFF  # get lower half for semantics (lower_half.shape) (100k+, )
-                lower_half = remap_lut_write[lower_half]  # do the remapping of semantics
-                pred = (upper_half << 16) + lower_half  # reconstruct full label
-                pred = pred.astype(np.uint32)
+                pred_out = pred + 1
+                pred_out = pred_out.cpu().numpy().squeeze()
+                pred_out = pred_out.astype(np.uint32)
+                upper_half = pred_out >> 16
+                lower_half = pred_out & 0xFFFF
+                lower_half = remap_lut_write[lower_half]
+                pred_out = (upper_half << 16) + lower_half
+                pred_out = pred_out.astype(np.uint32)
                 frame_id = data_path[0].split('/')[-1][:-4]
                 store_path = os.path.join(cfg.save_path, frame_id + '.label')
-                pred.tofile(store_path)
+                pred_out.tofile(store_path)
             elif 'scannet' in cfg.dataset.common.NAME.lower():
-                pred = pred.cpu().numpy().squeeze()
+                pred_out = pred.cpu().numpy().squeeze()
                 label_int_mapping={0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 11, 11: 12, 12: 14, 13: 16, 14: 24, 15: 28, 16: 33, 17: 34, 18: 36, 19: 39}
-                pred=np.vectorize(label_int_mapping.get)(pred)
+                pred_out=np.vectorize(label_int_mapping.get)(pred_out)
                 save_file_name=data_path.split('/')[-1].split('_')
                 save_file_name=save_file_name[0]+'_'+save_file_name[1]+'.txt'
                 save_file_name=os.path.join(cfg.save_path,save_file_name)
-                np.savetxt(save_file_name, pred, fmt="%d")
+                np.savetxt(save_file_name, pred_out, fmt="%d")
 
         if label is not None:
             tp, union, count = cm.tp, cm.union, cm.count
@@ -796,6 +823,7 @@ def test(model, data_list, cfg, num_votes=1):
         return miou, macc, oa, ious, accs, all_cm
     else:
         return None, None, None, None, None, None
+
 
 
 if __name__ == "__main__":
