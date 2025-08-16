@@ -60,12 +60,10 @@ def build_dataloader_from_cfg(batch_size,
         else:
             data_transform = None
 
-        # if split not in dataset_cfg.keys() and split in ['val', 'test']:
-        #     dataset_split = 'test' if split == 'val' else 'val'
-        # else:
-        #     dataset_split = split
-        dataset_split = split
-
+        if split not in dataset_cfg.keys() and split in ['val', 'test']:
+            dataset_split = 'test' if split == 'val' else 'val'
+        else:
+            dataset_split = split
         split_cfg = dataset_cfg.get(dataset_split, edict())
         if split_cfg.get('split', None) is None:    # add 'split' in dataset_split_cfg
             split_cfg.split = split

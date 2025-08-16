@@ -79,14 +79,14 @@ class S3DISTower(Dataset):
     gravity_dim = 2
 
     def __init__(self,
-                 data_root: str = '/root/autodl-tmp/raw',
+                 data_root: str = '/root/data/data_s3dis_pointNeXt',
                  test_area: int = 5,
                  voxel_size: float = 0.04,
                  voxel_max=None,
                  split: str = 'train',
                  transform=None,
                  loop: int = 1,
-                 presample: bool = False,
+                 presample: bool = True,
                  variable: bool = False,
                  shuffle: bool = True,
                  ):
@@ -97,96 +97,122 @@ class S3DISTower(Dataset):
         self.variable = variable
         self.shuffle = shuffle
 
-        # 修改: 使用 merged/ 下的场景文件
+        # === 目录结构：data_root 下只有 merged 与 processed 同级 ===
+        # merged/: 场景级 .npy（Area_*.npy）
+        # processed/: 各 split 合并缓存的 .pkl
         merged_root = os.path.join(data_root, 'merged')
+        processed_root = os.path.join(data_root, 'processed')
+        os.makedirs(processed_root, exist_ok=True)
         self.merged_root = merged_root
 
-        # 🔑 这里读取 train/val/test_scenes.txt
-        split_file = os.path.join(data_root, f"{split}_scenes.txt")
-        with open(split_file, "r") as f:
-            self.files = [line.strip() for line in f.readlines()]  # 每一行是 "merged/Area_xxx.npy"
+        # === 列出 merged 下的场景文件 ===
+        if not os.path.isdir(merged_root):
+            raise FileNotFoundError(f"merged directory not found: {merged_root}")
 
-        processed_root = os.path.join(data_root, 'processed')
-        filename = os.path.join(
-            processed_root, f's3dis_{split}_{voxel_size:.3f}_{str(voxel_max)}.pkl')
+        all_files = sorted(os.listdir(merged_root))
+        # 仅保留 Area_*.npy，并去掉扩展名，后续按 data_list + '.npy' 读取
+        data_list = [f[:-4] for f in all_files if f.startswith('Area_') and f.endswith('.npy')]
 
-        if presample and not os.path.exists(filename):
+        # === 根据 split 选择场景 ===
+        # 保持你原来的“以 test_area 来区分”的方式：
+        # - train: 非 test_area 的所有场景
+        # - val/test: 仅 test_area 的场景
+        if split == 'train':
+            self.data_list = [item for item in data_list if f'Area_{test_area}' not in item]
+        else:
+            self.data_list = [item for item in data_list if f'Area_{test_area}' in item]
+
+        # === 预采样缓存 pkl 的路径（按 split 单独保存） ===
+        self.pkl_path = os.path.join(
+            processed_root, f's3dis_{split}_area{test_area}_{voxel_size:.3f}_{str(voxel_max)}.pkl'
+        )
+
+        # === presample: 合并该 split 的所有场景为一个 pkl（list，每个元素=一个场景大点云） ===
+        if self.presample and not os.path.exists(self.pkl_path):
             np.random.seed(0)
             self.data = []
             for item in tqdm(self.data_list, desc=f'Loading S3DISTower {split} split'):
-                data_path = os.path.join(data_root, item)  # 修改: 直接用相对路径
-                cdata = np.load(data_path).astype(np.float32)
+                npy_path = os.path.join(merged_root, item + '.npy')
+                if not os.path.isfile(npy_path):
+                    raise FileNotFoundError(f"missing scene npy: {npy_path}")
+                cdata = np.load(npy_path).astype(np.float32)
+                # 对齐坐标原点到该场景最小值（与你原逻辑一致）
                 cdata[:, :3] -= np.min(cdata[:, :3], 0)
+                # 体素下采样（与原逻辑一致）
                 if voxel_size:
                     coord, feat, label = cdata[:, 0:3], cdata[:, 3:6], cdata[:, 6:7]
                     uniq_idx = voxelize(coord, voxel_size)
                     coord, feat, label = coord[uniq_idx], feat[uniq_idx], label[uniq_idx]
                     cdata = np.hstack((coord, feat, label))
                 self.data.append(cdata)
-            npoints = np.array([len(data) for data in self.data])
+
+            npoints = np.array([len(arr) for arr in self.data])
             logging.info('split: %s, median npoints %.1f, avg num points %.1f, std %.1f' %
                          (self.split, np.median(npoints), np.average(npoints), np.std(npoints)))
-            os.makedirs(processed_root, exist_ok=True)
-            with open(filename, 'wb') as f:
+            with open(self.pkl_path, 'wb') as f:
                 pickle.dump(self.data, f)
-                print(f"{filename} saved successfully")
-        elif presample:
-            with open(filename, 'rb') as f:
+                print(f"{self.pkl_path} saved successfully")
+        elif self.presample:
+            with open(self.pkl_path, 'rb') as f:
                 self.data = pickle.load(f)
-                print(f"{filename} load successfully")
+                print(f"{self.pkl_path} load successfully")
 
+        # === 索引与长度 ===
         self.data_idx = np.arange(len(self.data_list))
-        assert len(self.data_idx) > 0
+        assert len(self.data_idx) > 0, f"No samples found for split={split}. Check merged/ and test_area."
+
         logging.info(f"\nTotally {len(self.data_idx)} samples in {split} set")
 
     def __getitem__(self, idx):
         data_idx = self.data_idx[idx % len(self.data_idx)]
+
         if self.presample:
+            # 从 pkl 中取出该场景
             coord, feat, label = np.split(self.data[data_idx], [3, 6], axis=1)
         else:
-            # 这里直接从 txt 文件里读取到的路径，不需要再拼接 '.npy'
-            data_path = os.path.join(self.raw_root, self.files[data_idx])
-            cdata = np.load(data_path).astype(np.float32)
+            # 直接从 merged 读取该场景的 .npy
+            npy_path = os.path.join(self.merged_root, self.data_list[data_idx] + '.npy')
+            if not os.path.isfile(npy_path):
+                raise FileNotFoundError(f"missing scene npy: {npy_path}")
+            cdata = np.load(npy_path).astype(np.float32)
             cdata[:, :3] -= np.min(cdata[:, :3], 0)
             coord, feat, label = cdata[:, :3], cdata[:, 3:6], cdata[:, 6:7]
             coord, feat, label = crop_pc(
                 coord, feat, label, self.split, self.voxel_size, self.voxel_max,
                 downsample=not self.presample, variable=self.variable, shuffle=self.shuffle)
 
-        # 获取样本名称（方便调试输出）
-        sample_name = self.files[data_idx] if hasattr(self, "files") else f"idx_{idx}"
+        # 样本名，便于调试
+        sample_name = self.data_list[data_idx]
 
-        # 保证格式正确
+        # 形状与数值健壮性检查
         coord, feat, label = _ensure_shapes(coord, feat, label)
 
-        # ===== 调试日志：检查特征缺失 =====
+        # （可选）RGB 缺失排查输出
         if feat is None or feat.shape[1] < 3:
             print(f"[Debug][{self.split}] {sample_name} 缺失 RGB 特征: "
                   f"feat shape={None if feat is None else feat.shape}")
         else:
-            # 检查每个通道是否恒为0或恒为128（可能是补齐值）
             for ch_idx, ch_name in enumerate(["R", "G", "B"]):
                 unique_vals = np.unique(feat[:, ch_idx])
                 if len(unique_vals) == 1:
                     print(f"[Debug][{self.split}] {sample_name} {ch_name} 通道恒为 {unique_vals[0]}，可能缺失原始值")
-        # =================================
 
         coord, feat, mask = _sanitize_numeric(coord, feat)
         if label is not None:
             label = label[mask]
         voxel_max = getattr(self, 'voxel_max', None)
-        sample_name = self.files[data_idx] if hasattr(self, 'files') else f"idx_{data_idx}"
         coord, feat, label = _limit_points(coord, feat, label, voxel_max, self.split, sample_name)
 
-        # ====== 新增安全检查 ======
+        # 安全检查
         if coord.shape[0] < 1:
             raise ValueError(f"[{self.split}] sample {sample_name} has no points after processing")
         if not np.isfinite(coord).all() or not np.isfinite(feat).all():
             raise ValueError(f"[{self.split}] sample {sample_name} contains NaN/Inf values")
         if feat.shape[1] + coord.shape[1] != 6:
             raise ValueError(
-                f"[{self.split}] sample {sample_name} feature dim mismatch: coord({coord.shape[1]})+feat({feat.shape[1]}) != 6")
-        # =========================
+                f"[{self.split}] sample {sample_name} feature dim mismatch: "
+                f"coord({coord.shape[1]})+feat({feat.shape[1]}) != 6"
+            )
 
         full_feat = np.hstack([coord, feat])
         label = label.squeeze(-1).astype(np.long)
@@ -194,7 +220,7 @@ class S3DISTower(Dataset):
         if self.transform is not None:
             data = self.transform(data)
         if 'heights' not in data.keys():
-            data['heights'] = torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim + 1].astype(np.float32))
+            data['heights'] = torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim+1].astype(np.float32))
         return data
 
     def __len__(self):

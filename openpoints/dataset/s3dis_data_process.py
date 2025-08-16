@@ -30,14 +30,15 @@ def merge_scene_files(s3dis_output_dir, train_ratio=0.7, val_ratio=0.1, seed=42)
     os.makedirs(merged_dir, exist_ok=True)
 
     # 按场景分组
+    # 按场景分组
     scene_groups = {}
     for fname in os.listdir(raw_dir):
         if fname.endswith(".npy") and fname.startswith("Area_"):
-            # 用正则提取 "Area_数字-数字"
-            m = re.match(r"(Area_\d+-\d+)", fname)
+            # 用正则提取 "Area_数字"
+            m = re.match(r"(Area_\d+)", fname)  # ✅ 只取前面的场景号
             if not m:
                 raise ValueError(f"文件名不符合规则: {fname}")
-            scene_id = m.group(1)  # e.g. "Area_14-15"
+            scene_id = m.group(1)  # e.g. "Area_14"
             scene_groups.setdefault(scene_id, []).append(os.path.join(raw_dir, fname))
 
     scene_files = []

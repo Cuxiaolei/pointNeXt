@@ -75,31 +75,10 @@ def save_epoch_results(epoch, train_metrics, val_metrics, csv_path):
 
 def generate_data_list(cfg):
     if 's3dis' in cfg.dataset.common.NAME.lower():
-        # 修改: 优先根据预处理生成的 train/val/test_scenes.txt 按场景加载（相对路径基于 data_root）
-        data_root = cfg.dataset.common.data_root
-        split = getattr(cfg.dataset.test, 'split', 'test')  # 兼容 test 阶段/验证阶段
-        split_file = os.path.join(data_root, f"{split}_scenes.txt")
-        if os.path.isfile(split_file):
-            with open(split_file, 'r') as f:
-                rel_paths = [line.strip() for line in f if line.strip()]
-            # 这些相对路径通常形如 'merged/Area_x.npy'；保持逐场景一个样本
-            data_list = [os.path.join(data_root, relp) for relp in rel_paths]
-            return data_list
-
-        # 修改: 若不存在上述文件，回退到原有按 test_area 从 raw/ 读取的逻辑（向后兼容）
-        raw_root = os.path.join(data_root, 'raw')
-        fnames = [f for f in sorted(os.listdir(raw_root))
-                  if f.endswith('.npy') and f'Area_{cfg.dataset.common.test_area}' in f]
-        combine = cfg.get('combine_scene_files', True)
-        if combine:
-            groups = {}
-            for f in fnames:
-                base = f.rsplit('_', 1)[0]  # 以最后一个下划线前作为同场景前缀
-                groups.setdefault(base, []).append(os.path.join(raw_root, f))
-            data_list = [sorted(v) for v in groups.values()]
-        else:
-            data_list = [os.path.join(raw_root, f) for f in fnames]
-
+        raw_root = os.path.join(cfg.dataset.common.data_root, 'raw')
+        data_list = sorted(os.listdir(raw_root))
+        data_list = [os.path.join(raw_root, item) for item in data_list if
+                     'Area_{}'.format(cfg.dataset.common.test_area) in item]
     elif 'scannet' in cfg.dataset.common.NAME.lower():
         data_list = glob.glob(os.path.join(cfg.dataset.common.data_root, cfg.dataset.test.split, "*.pth"))
     elif 'semantickitti' in cfg.dataset.common.NAME.lower():
@@ -117,18 +96,9 @@ def generate_data_list(cfg):
 def load_data(data_path, cfg):
     label, feat = None, None
     if 's3dis' in cfg.dataset.common.NAME.lower():
-        # 新增：支持一个 cloud 是“同场景多文件”的 list
-        if isinstance(data_path, (list, tuple)):
-            arrays = [np.load(p) for p in data_path]  # 每个都是 N_i x 7 (xyz rgb label)
-            data = np.concatenate(arrays, axis=0)
-        else:
-            data = np.load(data_path)
-
+        data = np.load(data_path)  # xyzrgbl, N*7
         coord, feat, label = data[:, :3], data[:, 3:6], data[:, 6]
         feat = np.clip(feat / 255., 0, 1).astype(np.float32)
-        # data = np.load(data_path)  # xyzrgbl, N*7
-        # coord, feat, label = data[:, :3], data[:, 3:6], data[:, 6]
-        # feat = np.clip(feat / 255., 0, 1).astype(np.float32)
     elif 'scannet' in cfg.dataset.common.NAME.lower():
         data = torch.load(data_path)  # xyzrgbl, N*7
         coord, feat = data[0], data[1]
