@@ -28,6 +28,17 @@ import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+def check_class_distribution(loader, split_name):
+    all_labels = []
+    for batch in loader:
+        y = batch['y'].cpu().numpy().ravel()
+        all_labels.append(y)
+    all_labels = np.concatenate(all_labels)
+    uniq, cnts = np.unique(all_labels, return_counts=True)
+    dist = dict(zip(uniq.tolist(), cnts.tolist()))
+    print(f"[Debug][{split_name}] 标签分布: {dist}")
+
+
 
 def write_to_csv(oa, macc, miou, ious, best_epoch, cfg, write_header=True, area=5):
     ious_table = [f'{item:.2f}' for item in ious]
@@ -272,6 +283,7 @@ def main(gpu, cfg):
                                              split='train',
                                              distributed=cfg.distributed,
                                              )
+    check_class_distribution(train_loader, "train")
     logging.info(f"length of training dataset: {len(train_loader.dataset)}")
 
     cfg.criterion_args.weight = None
