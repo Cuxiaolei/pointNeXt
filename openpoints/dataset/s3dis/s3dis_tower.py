@@ -240,8 +240,6 @@ class S3DISTower(Dataset):
 
         full_feat = np.hstack([coord, feat])
         label = label.squeeze(-1).astype(np.long)
-        uniq_lbl, cnt_lbl = np.unique(label, return_counts=True)
-        print(f"[Debug][{self.split}] {sample_name} 标签分布: {dict(zip(uniq_lbl.tolist(), cnt_lbl.tolist()))}")
 
         data = {'pos': coord, 'x': full_feat, 'y': label}
         if self.transform is not None:
