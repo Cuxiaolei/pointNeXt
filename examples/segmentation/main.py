@@ -28,16 +28,27 @@ import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-def check_class_distribution(loader, split_name):
+def check_class_distribution(loader, split_name, num_classes=3):
+    """统计 dataloader 内的标签分布并打印百分比"""
     all_labels = []
     for batch in loader:
         y = batch['y'].cpu().numpy().ravel()
         all_labels.append(y)
+    if len(all_labels) == 0:
+        print(f"[Debug][{split_name}] 没有样本")
+        return
+
     all_labels = np.concatenate(all_labels)
     uniq, cnts = np.unique(all_labels, return_counts=True)
-    dist = dict(zip(uniq.tolist(), cnts.tolist()))
-    print(f"[Debug][{split_name}] 标签分布: {dist}")
+    total = all_labels.shape[0]
 
+    # 打印数量
+    dist = dict(zip(uniq.tolist(), cnts.tolist()))
+    print(f"\n[Debug][{split_name}] 标签分布(数量): {dist}")
+
+    # 打印百分比
+    perc = {cls: round(100.0 * dist.get(cls, 0) / total, 2) for cls in range(num_classes)}
+    print(f"[Debug][{split_name}] 标签分布(百分比): {perc} (总点数={total})")
 
 
 def write_to_csv(oa, macc, miou, ious, best_epoch, cfg, write_header=True, area=5):
