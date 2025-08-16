@@ -630,6 +630,7 @@ def test(model, data_list, cfg, num_votes=1):
                 if feat_part is not None and feat_part.shape[1] >= 3:
                     # 拼接坐标和RGB
                     data['x'] = np.hstack([coord_part, feat_part[:, :3]])
+                    logging.info(f"[Debug] 原始 feat_part shape: {feat_part.shape}")  # (N, 6)
                 else:
                     # 如果没有RGB，则用全0填充
                     rgb_dummy = np.zeros_like(coord_part, dtype=np.float32)
@@ -653,6 +654,9 @@ def test(model, data_list, cfg, num_votes=1):
                 for key in data.keys():
                     data[key] = data[key].cuda(non_blocking=True)
                 data['x'] = get_features_by_keys(data, cfg.feature_keys)
+                if data['x'] is not None:
+                    logging.info(f"[Debug] get_features_by_keys 之后的 data['x'] shape: {data['x'].shape}")
+                    logging.info(f"[Debug] 当前输入特征 shape: {data['x'].shape} （batch, 通道数, 点数）")
                 logits = model(data)
                 """visualization in debug mode. !!! visulization is not correct, should remove ignored idx.
                 from openpoints.dataset.vis3d import vis_points, vis_multi_points
