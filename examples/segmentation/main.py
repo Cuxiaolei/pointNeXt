@@ -631,6 +631,7 @@ def test(model, data_list, cfg, num_votes=1):
                     # 拼接坐标和RGB
                     data['x'] = np.hstack([coord_part, feat_part[:, :3]])
                     logging.info(f"[Debug] 原始 feat_part shape: {feat_part.shape}")  # (N, 6)
+                    logging.info(f"[Debug] 原始 data['x'] shape: {data['x'].shape}")  # (N, 6)
                 else:
                     # 如果没有RGB，则用全0填充
                     rgb_dummy = np.zeros_like(coord_part, dtype=np.float32)
