@@ -244,8 +244,6 @@ class S3DISTower(Dataset):
         data = {'pos': coord, 'x': full_feat, 'y': label}
         if self.transform is not None:
             data = self.transform(data)
-        if 'heights' not in data.keys():
-            data['heights'] = torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim+1].astype(np.float32))
         return data
 
     def __len__(self):
