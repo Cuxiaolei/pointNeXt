@@ -97,23 +97,25 @@ class S3DISTower(Dataset):
         self.variable = variable
         self.shuffle = shuffle
 
-        raw_root = os.path.join(data_root, 'raw')
-        self.raw_root = raw_root
-        data_list = sorted(os.listdir(raw_root))
-        data_list = [item[:-4] for item in data_list if 'Area_' in item]
-        if split == 'train':
-            self.data_list = [item for item in data_list if not f'Area_{test_area}' in item]
-        else:
-            self.data_list = [item for item in data_list if f'Area_{test_area}' in item]
+        # 修改: 使用 merged/ 下的场景文件
+        merged_root = os.path.join(data_root, 'merged')
+        self.merged_root = merged_root
+
+        # 修改: 读取 train_scenes.txt / val_scenes.txt / test_scenes.txt
+        split_file = os.path.join(data_root, f"{split}_scenes.txt")
+        assert os.path.exists(split_file), f"{split_file} 不存在，请先运行数据预处理生成"
+        with open(split_file, "r") as f:
+            self.data_list = [line.strip() for line in f.readlines() if line.strip()]
 
         processed_root = os.path.join(data_root, 'processed')
         filename = os.path.join(
-            processed_root, f's3dis_{split}_area{test_area}_{voxel_size:.3f}_{str(voxel_max)}.pkl')
+            processed_root, f's3dis_{split}_{voxel_size:.3f}_{str(voxel_max)}.pkl')
+
         if presample and not os.path.exists(filename):
             np.random.seed(0)
             self.data = []
-            for item in tqdm(self.data_list, desc=f'Loading S3DISFull {split} split on Test Area {test_area}'):
-                data_path = os.path.join(raw_root, item + '.npy')
+            for item in tqdm(self.data_list, desc=f'Loading S3DISTower {split} split'):
+                data_path = os.path.join(data_root, item)  # 修改: 直接用相对路径
                 cdata = np.load(data_path).astype(np.float32)
                 cdata[:, :3] -= np.min(cdata[:, :3], 0)
                 if voxel_size:
