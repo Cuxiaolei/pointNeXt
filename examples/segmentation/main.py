@@ -79,11 +79,23 @@ def generate_data_list(cfg):
         if not os.path.isfile(list_file):
             raise FileNotFoundError(f"Missing test scene file: {list_file}")
         logging.info(f"[test] Using test scene list file: {list_file}")
+
+        data_list = []
         with open(list_file, "r") as f:
-            data_list = [
-                os.path.join(cfg.dataset.common.data_root, 'merged', line.strip() + '.npy')
-                for line in f.readlines() if line.strip()
-            ]
+            for line in f.readlines():
+                name = line.strip()
+                if not name:
+                    continue
+                # 去掉目录前缀
+                if name.startswith("merged/"):
+                    name = name.split("/")[-1]
+                # 去掉扩展名
+                if name.endswith(".npy"):
+                    name = name[:-4]
+                # 拼成完整路径
+                npy_path = os.path.join(cfg.dataset.common.data_root, 'merged', name + ".npy")
+                data_list.append(npy_path)
+
         logging.info(f"[test] Found {len(data_list)} test scenes: {data_list[:5]}{'...' if len(data_list) > 5 else ''}")
 
 
