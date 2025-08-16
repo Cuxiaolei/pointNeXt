@@ -68,9 +68,9 @@ def write_to_csv(oa, macc, miou, ious, best_epoch, cfg, write_header=True, area=
 def save_epoch_results(epoch, train_metrics, val_metrics, csv_path):
     """保存每个epoch的训练和验证指标到CSV"""
     header = [
-                 'epoch', 'train_loss', 'train_miou', 'train_macc', 'train_oa',
-                 'val_miou', 'val_macc', 'val_oa'
-             ] + [f'val_iou_cls_{i}' for i in range(len(val_metrics.get('ious', [])))]
+        'epoch', 'train_loss', 'train_miou', 'train_macc', 'train_oa',
+        'val_miou', 'val_macc', 'val_oa'
+    ] + [f'val_iou_cls_{i}' for i in range(len(val_metrics.get("ious", [])))]
 
     row = [
         epoch,
@@ -232,6 +232,7 @@ def main(gpu, cfg):
                                            split='val',
                                            distributed=cfg.distributed
                                            )
+
     logging.info(f"length of validation dataset: {len(val_loader.dataset)}")
     num_classes = val_loader.dataset.num_classes if hasattr(val_loader.dataset, 'num_classes') else None
     if num_classes is not None:
@@ -492,7 +493,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, scaler
         cm.update(logits.argmax(dim=1), target)
         loss_meter.update(loss.item())
 
-        if idx % cfg.print_freq:
+        if idx % cfg.print_freq == 0:
             pbar.set_description(f"Train Epoch [{epoch}/{cfg.epochs}] "
                                  f"Loss {loss_meter.val:.3f} Acc {cm.overall_accuray:.2f}")
     miou, macc, oa, ious, accs = cm.all_metrics()
@@ -679,7 +680,6 @@ def test(model, data_list, cfg, num_votes=1):
             if not (nearest_neighbor and idx_subcloud>0):
                 idx_part = idx_points[idx_subcloud]
                 coord_part = coord[idx_part]
-                coord_part -= coord_part.min(0)
 
                 feat_part = feat[idx_part] if feat is not None else None
                 data = {'pos': coord_part}
@@ -694,10 +694,10 @@ def test(model, data_list, cfg, num_votes=1):
                 if pipe_transform is not None:
                     data = pipe_transform(data)
                 if 'heights' in cfg.feature_keys and 'heights' not in data.keys():
-                    if 'semantickitti' in cfg.dataset.common.NAME.lower():
-                        data['heights'] = torch.from_numpy((coord_part[:, gravity_dim:gravity_dim + 1] - coord_part[:, gravity_dim:gravity_dim + 1].min()).astype(np.float32)).unsqueeze(0)
-                    else:
-                        data['heights'] = torch.from_numpy(coord_part[:, gravity_dim:gravity_dim + 1].astype(np.float32)).unsqueeze(0)
+                    # 使用“全局”坐标的高度（load_data 内已做全局 min 平移）
+                    heights_global = coord[idx_part][:, gravity_dim:gravity_dim + 1].astype(np.float32)
+                    data['heights'] = torch.from_numpy(heights_global).unsqueeze(0)
+
                 if not cfg.dataset.common.get('variable', False):
                     if 'x' in data.keys():
                         data['x'] = data['x'].unsqueeze(0)
@@ -709,6 +709,14 @@ def test(model, data_list, cfg, num_votes=1):
                 for key in data.keys():
                     data[key] = data[key].cuda(non_blocking=True)
                 data['x'] = get_features_by_keys(data, cfg.feature_keys)
+
+                # --- 可选：检查通道数与模型 in_channels 是否一致 ---
+                x_shape = tuple(data['x'].shape) if data['x'] is not None else None
+                expect_c = getattr(cfg.model, 'in_channels', getattr(cfg.model.encoder_args, 'in_channels', None))
+                if data['x'] is not None and expect_c is not None and data['x'].shape[1] != expect_c:
+                    logging.warning(
+                        f"[Debug][test] 通道不一致: got C={data['x'].shape[1]}, expected {expect_c}. x.shape={x_shape}, feature_keys={cfg.feature_keys}")
+                # ---------------------------------------------------
 
                 # ===== Debug: 当前 subcloud 输入特征形状 =====
                 if data['x'] is not None:
