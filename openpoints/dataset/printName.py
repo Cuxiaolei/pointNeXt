@@ -34,7 +34,7 @@ def list_all_files(folder_path):
 
 if __name__ == "__main__":
     # 在这里替换为你要查询的文件夹路径
-    target_folder = r"D:\user\Documents\ai\paper\1_process\dataSet\s3dis_pointNeXt\output\raw"  # 例如: "./data" 或 "C:/Users/xxx/Documents"
+    target_folder = r"D:\user\Documents\ai\paper\1_process\dataSet\s3dis_pointNeXt\output\merged"
 
     print(f"开始列出文件夹 '{target_folder}' 中的所有文件...\n")
     list_all_files(target_folder)

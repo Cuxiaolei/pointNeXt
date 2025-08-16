@@ -75,10 +75,18 @@ def save_epoch_results(epoch, train_metrics, val_metrics, csv_path):
 
 def generate_data_list(cfg):
     if 's3dis' in cfg.dataset.common.NAME.lower():
-        raw_root = os.path.join(cfg.dataset.common.data_root, 'raw')
-        data_list = sorted(os.listdir(raw_root))
-        data_list = [os.path.join(raw_root, item) for item in data_list if
-                     'Area_{}'.format(cfg.dataset.common.test_area) in item]
+        list_file = os.path.join(cfg.dataset.common.data_root, 'test_scenes.txt')
+        if not os.path.isfile(list_file):
+            raise FileNotFoundError(f"Missing test scene file: {list_file}")
+        logging.info(f"[test] Using test scene list file: {list_file}")
+        with open(list_file, "r") as f:
+            data_list = [
+                os.path.join(cfg.dataset.common.data_root, 'merged', line.strip() + '.npy')
+                for line in f.readlines() if line.strip()
+            ]
+        logging.info(f"[test] Found {len(data_list)} test scenes: {data_list[:5]}{'...' if len(data_list) > 5 else ''}")
+
+
     elif 'scannet' in cfg.dataset.common.NAME.lower():
         data_list = glob.glob(os.path.join(cfg.dataset.common.data_root, cfg.dataset.test.split, "*.pth"))
     elif 'semantickitti' in cfg.dataset.common.NAME.lower():

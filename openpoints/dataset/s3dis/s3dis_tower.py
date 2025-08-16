@@ -114,18 +114,22 @@ class S3DISTower(Dataset):
         data_list = [f[:-4] for f in all_files if f.startswith('Area_') and f.endswith('.npy')]
 
         # === 根据 split 选择场景 ===
-        # 保持你原来的“以 test_area 来区分”的方式：
-        # - train: 非 test_area 的所有场景
-        # - val/test: 仅 test_area 的场景
-        if split == 'train':
-            self.data_list = [item for item in data_list if f'Area_{test_area}' not in item]
-        else:
-            self.data_list = [item for item in data_list if f'Area_{test_area}' in item]
+        list_file = os.path.join(data_root, f"{split}_scenes.txt")
+        if not os.path.isfile(list_file):
+            raise FileNotFoundError(f"Missing split file: {list_file}")
+
+        logging.info(f"[{split}] Using scene list file: {list_file}")
+        with open(list_file, "r") as f:
+            self.data_list = [line.strip() for line in f.readlines() if line.strip()]
+
+        logging.info(
+            f"[{split}] Found {len(self.data_list)} scenes: {self.data_list[:5]}{'...' if len(self.data_list) > 5 else ''}")
 
         # === 预采样缓存 pkl 的路径（按 split 单独保存） ===
         self.pkl_path = os.path.join(
-            processed_root, f's3dis_{split}_area{test_area}_{voxel_size:.3f}_{str(voxel_max)}.pkl'
+            processed_root, f's3dis_{split}_{voxel_size:.3f}_{str(voxel_max)}.pkl'
         )
+        logging.info(f"[{split}] Cache pkl path: {self.pkl_path}")
 
         # === presample: 合并该 split 的所有场景为一个 pkl（list，每个元素=一个场景大点云） ===
         if self.presample and not os.path.exists(self.pkl_path):
