@@ -231,14 +231,17 @@ class S3DISTower(Dataset):
                 f"coord({coord.shape[1]})+feat({feat.shape[1]}) != 6"
             )
 
+        # --- 归一化 RGB ---
+        feat = feat.astype(np.float32)
+        if feat.max() > 1.0:  # 说明是 0~255 范围
+            feat = feat / 255.0
+        feat = np.clip(feat, 0.0, 1.0)
+
+
         full_feat = np.hstack([coord, feat])
         label = label.squeeze(-1).astype(np.long)
-
-        # Debug: 标签分布
-        if label is not None:
-            uniq, cnts = np.unique(label, return_counts=True)
-            print(f"[Debug][__getitem__] split={self.split}, sample={sample_name}, "
-                  f"标签分布: {dict(zip(uniq.tolist(), cnts.tolist()))}")
+        uniq_lbl, cnt_lbl = np.unique(label, return_counts=True)
+        print(f"[Debug][{self.split}] {sample_name} 标签分布: {dict(zip(uniq_lbl.tolist(), cnt_lbl.tolist()))}")
 
         data = {'pos': coord, 'x': full_feat, 'y': label}
         if self.transform is not None:

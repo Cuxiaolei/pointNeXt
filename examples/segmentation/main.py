@@ -458,6 +458,11 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, scaler
         data['iter'] = total_iter 
         with torch.cuda.amp.autocast(enabled=cfg.use_amp):
             logits = model(data)
+            # Debug: 训练预测分布
+            pred = logits.argmax(dim=1)
+            pred_hist = torch.bincount(pred.view(-1), minlength=cfg.num_classes).cpu().numpy()
+            print(f"[Debug][train] 当前 batch 预测分布: {dict(enumerate(pred_hist))}")
+
             loss = criterion(logits, target) if 'mask' not in cfg.criterion_args.NAME.lower() \
                 else criterion(logits, target, data['mask'])
 
