@@ -21,7 +21,7 @@ dataset:
 feature_keys: x
 num_classes: 3
 batch_size: 5
-val_batch_size: 5
+val_batch_size: 1
 
 dataloader:
   num_workers: 6
@@ -43,7 +43,7 @@ datatransforms:
 # ---------------------------------------------------------------------------- #
 val_fn: validate
 ignore_index: null 
-epochs: 10
+epochs: 100
 
 cls_weighed_loss: False
 
