@@ -20,7 +20,7 @@ dataset:
 
 feature_keys: x
 num_classes: 3
-batch_size: 5
+batch_size: 8
 val_batch_size: 1
 
 dataloader:
