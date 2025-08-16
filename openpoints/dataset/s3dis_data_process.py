@@ -2,7 +2,7 @@ import os
 import numpy as np
 import laspy
 from tqdm import tqdm
-
+import re
 # 标签映射
 label_mapping = {
     "铁塔": 0,
@@ -23,8 +23,8 @@ BETA = 1.25                # 背景 = BETA × (N0+N2)
 BG_MIN = 3_000_000         # 背景保底总点数
 MIN_KEEP_POINTS = 2000     # 背景文件保护阈值（≤这个点数不采样）
 
-def merge_scene_files(s3dis_output_dir, train_ratio=0.8, seed=42):
-    """把同一场景的多个类别文件合并成一个场景文件，再划分 train/test 场景"""
+def merge_scene_files(s3dis_output_dir, train_ratio=0.7, val_ratio=0.1, seed=42):
+    """把同一场景的多个类别文件合并成一个场景文件，再划分 train/val/test 场景"""
     raw_dir = os.path.join(s3dis_output_dir, "raw")
     merged_dir = os.path.join(s3dis_output_dir, "merged")
     os.makedirs(merged_dir, exist_ok=True)
@@ -33,7 +33,11 @@ def merge_scene_files(s3dis_output_dir, train_ratio=0.8, seed=42):
     scene_groups = {}
     for fname in os.listdir(raw_dir):
         if fname.endswith(".npy") and fname.startswith("Area_"):
-            scene_id = "_".join(fname.split("_")[:2])  # e.g. Area_1
+            # 用正则提取 "Area_数字-数字"
+            m = re.match(r"(Area_\d+-\d+)", fname)
+            if not m:
+                raise ValueError(f"文件名不符合规则: {fname}")
+            scene_id = m.group(1)  # e.g. "Area_14-15"
             scene_groups.setdefault(scene_id, []).append(os.path.join(raw_dir, fname))
 
     scene_files = []
@@ -41,7 +45,6 @@ def merge_scene_files(s3dis_output_dir, train_ratio=0.8, seed=42):
         arrays = []
         for f in files:
             arr = np.load(f)
-            # 确保 [N,7] 格式
             label = int(arr[:, -1][0]) if arr.shape[1] >= 7 else -1
             arr = ensure_feature_integrity(arr, label)
             arrays.append(arr)
@@ -49,30 +52,29 @@ def merge_scene_files(s3dis_output_dir, train_ratio=0.8, seed=42):
         save_path = os.path.join(merged_dir, f"{scene_id}.npy")
         np.save(save_path, merged)
         print(f"[合并场景] {scene_id}: {len(files)} 个文件 → {merged.shape[0]} 点")
-        # 保存相对路径
-        rel_path = os.path.relpath(save_path, s3dis_output_dir)
+        # 修改: 保证相对路径是 Linux 格式
+        rel_path = os.path.relpath(save_path, s3dis_output_dir).replace("\\", "/")
         scene_files.append(rel_path)
 
-        # 随机划分场景
-        np.random.seed(seed)
-        np.random.shuffle(scene_files)
-        n_total = len(scene_files)
-        n_train = int(n_total * 0.7)
-        n_val = int(n_total * 0.1)
-        train_scenes = scene_files[:n_train]
-        val_scenes = scene_files[n_train:n_train + n_val]
-        test_scenes = scene_files[n_train + n_val:]
+    # 随机划分 train / val / test
+    np.random.seed(seed)
+    np.random.shuffle(scene_files)
+    n_total = len(scene_files)
+    n_train = int(n_total * train_ratio)
+    n_val   = int(n_total * val_ratio)
+    train_scenes = scene_files[:n_train]
+    val_scenes   = scene_files[n_train:n_train+n_val]
+    test_scenes  = scene_files[n_train+n_val:]
 
-        with open(os.path.join(s3dis_output_dir, "train_scenes.txt"), "w") as f:
-            f.write("\n".join(train_scenes))
-        with open(os.path.join(s3dis_output_dir, "val_scenes.txt"), "w") as f:
-            f.write("\n".join(val_scenes))
-        with open(os.path.join(s3dis_output_dir, "test_scenes.txt"), "w") as f:
-            f.write("\n".join(test_scenes))
+    def write_list(fname, data):
+        with open(os.path.join(s3dis_output_dir, fname), "w") as f:
+            f.write("\n".join(data))
 
-    print(f"[划分完成] 训练场景 {len(train_scenes)} 个, 测试场景 {len(test_scenes)} 个")
+    write_list("train_scenes.txt", train_scenes)
+    write_list("val_scenes.txt", val_scenes)
+    write_list("test_scenes.txt", test_scenes)
 
-
+    print(f"[划分完成] 训练场景 {len(train_scenes)} 个, 验证场景 {len(val_scenes)} 个, 测试场景 {len(test_scenes)} 个")
 
 def ensure_feature_integrity(arr, label):
     """确保每个点有7个特征（3坐标+3颜色+1标签）"""
@@ -223,4 +225,4 @@ if __name__ == "__main__":
     process_las_to_s3dis(LAS_INPUT_DIR, S3DIS_OUTPUT_DIR, balance=True)
 
     # 合并并划分
-    merge_scene_files(S3DIS_OUTPUT_DIR, train_ratio=0.8)
+    merge_scene_files(S3DIS_OUTPUT_DIR, train_ratio=0.7)

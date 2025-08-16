@@ -145,7 +145,8 @@ class S3DISTower(Dataset):
         if self.presample:
             coord, feat, label = np.split(self.data[data_idx], [3, 6], axis=1)
         else:
-            data_path = os.path.join(self.raw_root, self.data_list[data_idx] + '.npy')
+            # 这里直接从 txt 文件里读取到的路径，不需要再拼接 '.npy'
+            data_path = os.path.join(self.raw_root, self.files[data_idx])
             cdata = np.load(data_path).astype(np.float32)
             cdata[:, :3] -= np.min(cdata[:, :3], 0)
             coord, feat, label = cdata[:, :3], cdata[:, 3:6], cdata[:, 6:7]
@@ -154,7 +155,7 @@ class S3DISTower(Dataset):
                 downsample=not self.presample, variable=self.variable, shuffle=self.shuffle)
 
         # 获取样本名称（方便调试输出）
-        sample_name = self.data_names[idx] if hasattr(self, "data_names") else f"idx_{idx}"
+        sample_name = self.files[data_idx] if hasattr(self, "files") else f"idx_{idx}"
 
         # 保证格式正确
         coord, feat, label = _ensure_shapes(coord, feat, label)
@@ -171,13 +172,11 @@ class S3DISTower(Dataset):
                     print(f"[Debug][{self.split}] {sample_name} {ch_name} 通道恒为 {unique_vals[0]}，可能缺失原始值")
         # =================================
 
-
-
         coord, feat, mask = _sanitize_numeric(coord, feat)
         if label is not None:
             label = label[mask]
         voxel_max = getattr(self, 'voxel_max', None)
-        sample_name = self.data_list[data_idx] if hasattr(self, 'data_list') else f"idx_{data_idx}"
+        sample_name = self.files[data_idx] if hasattr(self, 'files') else f"idx_{data_idx}"
         coord, feat, label = _limit_points(coord, feat, label, voxel_max, self.split, sample_name)
 
         # ====== 新增安全检查 ======
@@ -186,7 +185,8 @@ class S3DISTower(Dataset):
         if not np.isfinite(coord).all() or not np.isfinite(feat).all():
             raise ValueError(f"[{self.split}] sample {sample_name} contains NaN/Inf values")
         if feat.shape[1] + coord.shape[1] != 6:
-            raise ValueError(f"[{self.split}] sample {sample_name} feature dim mismatch: coord({coord.shape[1]})+feat({feat.shape[1]}) != 6")
+            raise ValueError(
+                f"[{self.split}] sample {sample_name} feature dim mismatch: coord({coord.shape[1]})+feat({feat.shape[1]}) != 6")
         # =========================
 
         full_feat = np.hstack([coord, feat])
@@ -195,7 +195,7 @@ class S3DISTower(Dataset):
         if self.transform is not None:
             data = self.transform(data)
         if 'heights' not in data.keys():
-            data['heights'] = torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim+1].astype(np.float32))
+            data['heights'] = torch.from_numpy(coord[:, self.gravity_dim:self.gravity_dim + 1].astype(np.float32))
         return data
 
     def __len__(self):
